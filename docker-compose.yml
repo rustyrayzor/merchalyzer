@@ -1,4 +1,23 @@
 services:
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile.prod
+    ports:
+      - "3030:3000"
+    environment:
+      - NODE_ENV=production
+      - PORT=3000
+    env_file:
+      - env.production
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
   upscayl:
     build:
       context: .
@@ -9,3 +28,4 @@ services:
       - ./tmp:/tmp/upscayl
     environment:
       - PYTHONUNBUFFERED=1
+    restart: unless-stopped
