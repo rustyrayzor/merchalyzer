@@ -9,8 +9,8 @@ WORKDIR /app
 # Copy package files
 COPY web/package*.json ./
 
-# Install dependencies
-RUN npm ci --only=production
+# Install all dependencies (including dev dependencies for build)
+RUN npm ci
 
 # Copy source code
 COPY web/ ./
@@ -36,6 +36,9 @@ COPY web/package*.json ./
 
 # Install only production dependencies
 RUN npm ci --only=production && npm cache clean --force
+
+# Install TypeScript separately for runtime config loading
+RUN npm install --save-dev typescript && npm cache clean --force
 
 # Copy built application from builder stage
 COPY --from=builder --chown=nextjs:nodejs /app/.next ./.next

@@ -1,4 +1,4 @@
-# Merchalyzer Production Deployment Script (PowerShell)
+# Merchalyzer Production Deployment Script (PowerShell) - Fixed Version
 # Deploys the application to 192.168.100.206 on port 3030
 
 param(
@@ -9,7 +9,7 @@ param(
 # Configuration
 $RemoteHost = "192.168.100.206"
 $RemoteUser = "ray-svc"
-$RemotePath = "/opt/merchalyzer"
+$RemotePath = "~/merchalyzer"
 $SshKeyPath = "$env:USERPROFILE\.ssh\merchalyzer_deploy_key"
 
 # Colors for output
@@ -90,8 +90,7 @@ Write-Status "Creating remote deployment directory..."
 try {
     & ssh -i $SshKeyPath "$RemoteUser@$RemoteHost" "mkdir -p $RemotePath" 2>$null
     if ($LASTEXITCODE -ne 0) {
-        Write-Error "Failed to create remote directory"
-        exit 1
+        throw "Failed to create remote directory"
     }
 } catch {
     Write-Error "Failed to create remote directory: $_"
@@ -100,7 +99,7 @@ try {
 
 # Copy project files
 Write-Status "Copying project files to remote server..."
-Write-Info "Using scp to transfer files (this may take a while)..."
+Write-Info "Using tar/scp to transfer files (this may take a while)..."
 
 # Create a temporary tar file excluding unwanted directories
 $tempTar = "deploy_temp.tar.gz"

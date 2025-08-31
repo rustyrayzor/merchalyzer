@@ -2,8 +2,8 @@ FROM ubuntu:22.04
 
 # Set environment variables to avoid interactive prompts during build
 ENV DEBIAN_FRONTEND=noninteractive
-ENV UPSCAYL_VERSION=2.15.0
-ENV UPSCAYL_CLI_URL=https://github.com/upscayl/upscayl/releases/download/v${UPSCAYL_VERSION}/upscayl-linux.tar.gz
+ENV UPSCAYL_VERSION=2.11.0
+ENV UPSCAYL_CLI_URL=https://github.com/upscayl/upscayl/releases/download/v${UPSCAYL_VERSION}/upscayl-2.11.0-linux.tar.gz
 
 # Install system dependencies
 RUN apt-get update && apt-get install -y \
