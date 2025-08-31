@@ -1,0 +1,11 @@
+services:
+  upscayl:
+    build:
+      context: .
+      dockerfile: Dockerfile.upscayl
+    ports:
+      - "5001:5001"
+    volumes:
+      - ./tmp:/tmp/upscayl
+    environment:
+      - PYTHONUNBUFFERED=1

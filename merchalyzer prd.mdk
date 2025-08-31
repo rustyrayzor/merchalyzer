@@ -1,0 +1,252 @@
+PRD: Amazon Merch Image Manager (List-Based)
+1. Product Overview
+
+Purpose:
+Enable users to efficiently manage multiple product images, edit them with AI (Gemini), automatically scale to required Amazon Merch dimensions (4500×5400 px), remove backgrounds, upscale images, and export in batch—all without manual artboards.
+
+Target Users:
+
+Merch creators/designers
+
+Small business owners uploading images to Amazon Merch
+
+Users needing batch AI editing and image processing
+
+Key Goals:
+
+Streamline image editing and scaling workflow
+
+Reduce manual repetitive steps
+
+Support batch processing for efficiency
+
+Ensure images maintain aspect ratio (no distortion)
+
+2. Features & Requirements
+2.1 Image Upload
+
+Support multiple image uploads at once
+
+Generate thumbnails for preview
+
+Assign unique IDs to each image
+
+Store original images in temporary storage
+
+2.2 List-Based Image Management
+
+Display uploaded images in a vertical list
+
+Left: Thumbnail
+
+Right: Editable fields:
+
+Brand
+
+Title
+
+Bullet 1
+
+Bullet 2
+
+Description
+
+Bottom row (per image) contains action buttons:
+
+Scale to 4500×5400
+
+Edit with AI (Gemini)
+
+Background Remove
+
+Upscale
+
+Delete
+
+2.3 AI Editing (Gemini)
+
+Apply AI-based modifications via prompt input
+
+Editable pre-placement (before scaling and BG removal)
+
+Supports batch application
+
+2.4 Scaling
+
+Scale images to 4500×5400 px
+
+Preserve original aspect ratio (fit: contain)
+
+Fill empty space with transparent background
+
+2.5 Background Removal
+
+Remove background using Rembg
+
+Applied after scaling
+
+Optional for batch processing
+
+2.6 Upscaling
+
+Enhance image resolution using Upscayl
+
+Applied after scaling and background removal
+
+Supports batch processing
+
+2.7 Batch Actions
+
+Select multiple images for simultaneous actions:
+
+Scale All
+
+Edit All AI
+
+Remove BG All
+
+Upscale All
+
+Provide progress/status feedback per image
+
+2.8 Export
+
+Batch download of all processed images
+
+Format: PNG (with transparency if BG removed)
+
+Optional: include metadata JSON for Amazon Merch
+
+2.9 Status Tracking
+
+Show live processing status per image:
+
+Pending
+
+Queued
+
+Processing
+
+Done
+
+Error
+
+3. User Interface
+
+Layout:
+
++---------------------------------------------------------------+
+| [Thumbnail]   Brand: [_________]                             |
+|                Title: [_________]                            |
+|                Bullet 1: [_________]                         |
+|                Bullet 2: [_________]                         |
+|                Description: [____________________________]   |
+|                                                               |
+|  [Scale 4500x5400] [Edit AI] [Remove BG] [Upscale] [Delete]  |
++---------------------------------------------------------------+
+
+
+Batch Toolbar:
+
+Positioned above list
+
+Buttons: Select All, Scale All, Edit All AI, Remove BG All, Upscale All
+
+4. Technical Requirements
+Frontend
+
+Next.js with React
+
+Components:
+
+ImageManager – main container & upload handler
+
+ImageRow – individual image row with metadata & action buttons
+
+BatchToolbar – batch action interface
+
+Use react-hook-form or equivalent for inline editing
+
+Thumbnails generated for quick preview
+
+Backend
+
+Node.js / Express (or Next.js API routes)
+
+API endpoints per action:
+
+/api/images/scale
+
+/api/images/edit-ai
+
+/api/images/remove-bg
+
+/api/images/upscale
+
+Supports single image or batch requests
+
+Queue management for concurrent processing
+
+Image Processing
+
+Sharp – scaling (contain, no distortion)
+
+Rembg – background removal
+
+Upscayl – upscaling
+
+Gemini AI – placeholder for edit API
+
+Storage
+
+Temporary folder for original uploads
+
+Processed images stored separately per image ID
+
+Optionally integrate persistent storage (DigitalOcean Spaces or local filesystem)
+
+5. Workflow Flow
+
+User uploads images → thumbnails generated → each row created.
+
+Optional: User edits metadata inline (brand, title, bullets, description).
+
+User applies AI edits (individual or batch).
+
+System scales images to 4500×5400 with contain fit.
+
+System applies background removal (optional, batch supported).
+
+System upscales images (optional, batch supported).
+
+User monitors processing status per image.
+
+User downloads batch of final processed images.
+
+6. Acceptance Criteria
+
+Images scale to exact dimensions without distortion
+
+AI edits apply before any transformations
+
+Background removal preserves transparency
+
+Upscaling works on images post-processing
+
+Batch actions work for multiple images simultaneously
+
+Metadata is editable inline and exported correctly
+
+Progress/status displayed correctly for each image
+
+7. Future Enhancements
+
+Auto-generate titles and bullets via AI
+
+Drag-and-drop reordering of images in the list
+
+Templates for Amazon Merch products (T-shirts, hoodies, stickers)
+
+WebSocket for real-time progress updates during batch processing
+
+Note: Docker is installed locally.

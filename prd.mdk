@@ -1,0 +1,142 @@
+Perfect—**bulk apply brand/keywords**, **English only**, **no authentication**.
+
+I have all the info needed now to draft a tight MVP PRD. Here’s a structured draft for your app:
+
+---
+
+## **Product Requirements Document (PRD) – AI Text Generation for Image Metadata**
+
+### **1. Overview**
+
+A web-based application that allows users to upload multiple images (JPG/PNG), pass global instructions to an AI model via OpenRouter, and generate structured metadata (Brand, Title, Bullet 1, Bullet 2, Description) for each image. The output is editable in a table and downloadable as an Excel-compatible CSV.
+
+---
+
+### **2. Goals**
+
+* Quickly generate Amazon Merch-compliant metadata for multiple images.
+* Allow configuration of AI models and global instructions.
+* Enable editing, regeneration, and CSV export.
+* Keep workflow simple and fast for a single user.
+
+---
+
+### **3. Platform & Environment**
+
+* Web-based, built on **Next.js**.
+* Hosted on a cloud platform.
+* Single account, no authentication required.
+
+---
+
+### **4. File Upload**
+
+* Supported file types: **JPG, PNG**.
+* Drag-and-drop or browse selection.
+* Thumbnails generated for preview.
+* No strict limits for MVP (infinite scroll table).
+
+---
+
+### **5. AI Processing**
+
+* Each image processed **individually**.
+* OpenRouter AI model **configurable** (selectable per session).
+* Global instruction box applied to all images.
+* Option to specify **keywords** and **brand**.
+* Ability to regenerate **single fields** or **entire row**.
+
+---
+
+### **6. User Interface**
+
+* **Thumbnail preview** of uploaded images.
+* **Editable table** with columns: Image Name, Brand, Title, Bullet 1, Bullet 2, Description.
+* Infinite scroll for table.
+* Option to **regenerate single fields or entire row**.
+* **Bulk apply** brand/keywords across all rows.
+
+---
+
+### **7. CSV Export**
+
+* Export all columns **always** included.
+* Image name uses **original file name**.
+* CSV is **Excel-compatible, UTF-8**.
+
+---
+
+### **8. Instructions & Templates**
+
+* **Global instructions box** for AI.
+* Ability to **save and reuse instruction templates**.
+* Optional **keywords** and **brand name** input.
+
+---
+
+### **9. Workflow**
+
+1. Upload images.
+2. Preview thumbnails.
+3. Enter global instructions, keywords, and optional brand.
+4. Select AI model.
+5. Click **Generate** → table populated with AI-generated metadata.
+6. Edit fields as needed.
+7. Regenerate single fields or full row if required.
+8. Apply bulk brand/keywords if needed.
+9. Click **Download CSV**.
+
+---
+
+### **10. Non-Functional Requirements**
+
+* Responsive and fast UI.
+* Scalable to handle multiple image uploads.
+* AI calls asynchronous with loading indicators per image.
+* Minimalistic, clean design for fast workflow.
+
+
+---
+
+### **11. Analysis & Implementation Notes**
+
+**Scope mapping**
+- File upload: JPG/PNG drag-and-drop with thumbnails; no hard limit for MVP.
+- AI generation: Per-image, configurable OpenRouter model, global instructions, optional brand/keywords.
+- Editing: Inline table editing with per-field or per-row regenerate.
+- Bulk actions: Apply brand and keywords across all rows.
+- Export: Always include all columns; original file name for image; CSV UTF-8.
+- Templates: Save/load instruction presets locally.
+
+**Architecture**
+- Frontend: Next.js (App Router), TypeScript, Tailwind for minimal UI.
+- API: Single server route to call OpenRouter with strict validation.
+- Data flow: Pure functions for transforms; local state for table; localStorage for templates.
+
+**Data model (per image row)**
+- imageName, brand, title, bullet1, bullet2, description.
+- status per-field for loading/regeneration indicators.
+
+**API surface**
+- POST /api/generate: { imageName, instructions, brand?, keywords?, model } → structured fields.
+
+**UX flow**
+1) Upload images → thumbnails listed.
+2) Enter global instructions, brand (optional), keywords (optional) → select model.
+3) Generate → rows populate; show per-field loaders.
+4) Edit inline; regenerate field/row as needed.
+5) Bulk apply brand/keywords (optional).
+6) Download CSV.
+
+**Risks**
+- Large batches: rate limits and latency; mitigate with per-image async and feedback.
+- Hallucination/format variance: enforce output schema and retry or sanitize.
+
+**Acceptance criteria**
+- Can upload multiple JPG/PNG, see thumbnails.
+- Can set global instructions, model, optional brand/keywords.
+- Generate fills all five fields per image with per-field spinners.
+- Inline edits persist in state; per-field and per-row regenerate work.
+- Bulk apply brand/keywords updates all rows.
+- CSV downloads with all columns, correct encoding, and original file names.
+- Templates can be saved/loaded locally.

@@ -1,0 +1,6 @@
+{
+  "dependencies": {
+    "@remove-background-ai/rembg.js": "^1.2.2",
+    "dotenv": "^17.2.1"
+  }
+}

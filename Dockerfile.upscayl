@@ -1,0 +1,71 @@
+FROM ubuntu:22.04
+
+# Set environment variables to avoid interactive prompts during build
+ENV DEBIAN_FRONTEND=noninteractive
+ENV UPSCAYL_VERSION=2.15.0
+ENV UPSCAYL_CLI_URL=https://github.com/upscayl/upscayl/releases/download/v${UPSCAYL_VERSION}/upscayl-linux.tar.gz
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y \
+    wget \
+    curl \
+    python3 \
+    python3-pip \
+    libglib2.0-0 \
+    libgtk-3-0 \
+    libx11-xcb1 \
+    libxss1 \
+    libasound2 \
+    libdrm2 \
+    libxcomposite1 \
+    libxdamage1 \
+    libxrandr2 \
+    libgbm1 \
+    libxkbcommon0 \
+    libatspi2.0-0 \
+    libgdk-pixbuf2.0-0 \
+    libcairo-gobject2 \
+    libpango-1.0-0 \
+    libatk1.0-0 \
+    libx11-6 \
+    libxcb1 \
+    libxfixes3 \
+    libxext6 \
+    libxrender1 \
+    libxi6 \
+    libxtst6 \
+    fonts-liberation \
+    libappindicator3-1 \
+    lsb-release \
+    xdg-utils \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Python dependencies for the web server
+RUN pip3 install flask pillow requests
+
+# Create directories
+RUN mkdir -p /opt/upscayl /app /tmp/upscayl
+
+# Download and extract Upscayl CLI (v2.15.0)
+RUN echo "Downloading Upscayl from: ${UPSCAYL_CLI_URL}" && \
+    wget -O /tmp/upscayl-cli.tar.gz ${UPSCAYL_CLI_URL} && \
+    echo "Download complete, extracting..." && \
+    ls -la /tmp/upscayl-cli.tar.gz && \
+    tar -tzf /tmp/upscayl-cli.tar.gz | head -10 && \
+    tar -xzf /tmp/upscayl-cli.tar.gz -C /opt/upscayl --strip-components=1 && \
+    echo "Extraction complete, contents of /opt/upscayl:" && \
+    ls -la /opt/upscayl/ && \
+    chmod +x /opt/upscayl/upscayl-bin && \
+    echo "Upscayl setup complete" || (echo "Upscayl setup failed" && ls -la /tmp/ && exit 1)
+
+# Copy API wrapper script into container
+COPY upscayl-service.py /app/
+
+# Set working directory
+WORKDIR /app
+
+# Expose port for the service
+EXPOSE 5001
+
+# Start the Flask web service
+CMD ["python3", "/app/upscayl-service.py"]
