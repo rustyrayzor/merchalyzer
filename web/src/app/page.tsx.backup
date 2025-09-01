@@ -1,0 +1,200 @@
+"use client";
+
+import { useEffect, useState } from "react";
+import Uploader from "@/components/Uploader";
+import Link from "next/link";
+import InputsPanel from "@/components/InputsPanel";
+import EditableTable from "@/components/EditableTable";
+import { RowData } from "@/lib/types";
+import { rowsToCsv, triggerDownloadCsv } from "@/lib/csv";
+import { loadDefaultBrand, loadDefaultInstructions, loadDefaultKeywords, loadDefaultModel } from "@/lib/storage";
+
+export default function Home() {
+  const [rows, setRows] = useState<RowData[]>([]);
+  const [imageUrls, setImageUrls] = useState<Record<string, string>>({});
+  const [imageBase64Map, setImageBase64Map] = useState<Record<string, string>>({});
+  const [model, setModel] = useState("openrouter/auto");
+  const [instructions, setInstructions] = useState("");
+  const [brand, setBrand] = useState("");
+  const [keywords, setKeywords] = useState("");
+  const [isGenerating, setIsGenerating] = useState(false);
+  const [progress, setProgress] = useState<{ done: number; total: number }>({ done: 0, total: 0 });
+
+  useEffect(() => {
+    const defInstr = loadDefaultInstructions();
+    if (defInstr && !instructions) setInstructions(defInstr);
+    const defModel = loadDefaultModel();
+    if (defModel && model !== defModel) setModel(defModel);
+    const defBrand = loadDefaultBrand();
+    if (defBrand && !brand) setBrand(defBrand);
+    const defKeywords = loadDefaultKeywords();
+    if (defKeywords && !keywords) setKeywords(defKeywords);
+  }, [instructions, model, brand, keywords]);
+
+  const onFiles = (fs: File[]) => {
+    setFiles((prev) => [...prev, ...fs]);
+    const newRows: RowData[] = fs.map((f) => ({
+      imageName: f.name,
+      brand: "",
+      title: "",
+      bullet1: "",
+      bullet2: "",
+      description: "",
+    }));
+    setRows((prev) => [...prev, ...newRows]);
+    setImageUrls((prev) => {
+      const next: Record<string, string> = { ...prev };
+      for (const f of fs) {
+        if (!next[f.name]) {
+          next[f.name] = URL.createObjectURL(f);
+        }
+      }
+      return next;
+    });
+    // Convert to base64 data URLs for vision models
+    fs.forEach((f) => {
+      const reader = new FileReader();
+      reader.onload = () => {
+        const dataUrl = String(reader.result || "");
+        setImageBase64Map((prev) => ({ ...prev, [f.name]: dataUrl }));
+      };
+      reader.readAsDataURL(f);
+    });
+  };
+
+  const onGenerateAll = async () => {
+    const next = [...rows];
+    setIsGenerating(true);
+    setProgress({ done: 0, total: next.length });
+    for (let i = 0; i < next.length; i++) {
+      const r = next[i];
+      const res = await fetch("/api/generate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          mode: "row",
+          imageName: r.imageName,
+          instructions,
+          brand: brand || undefined,
+          keywords: keywords || undefined,
+          model,
+          imageBase64: imageBase64Map[r.imageName],
+        }),
+      });
+      if (res.ok) {
+        const modelUsed = res.headers.get('X-Model-Used') || '';
+        const promptPreview = res.headers.get('X-User-Prompt-Preview') || '';
+        const systemPreview = res.headers.get('X-System-Prompt-Preview') || '';
+        if (modelUsed) {
+          console.log('Generate row model used:', modelUsed);
+        }
+        if (promptPreview) {
+          console.log('Generate row prompt preview:', promptPreview);
+        }
+        if (systemPreview) {
+          console.log('System prompt preview:', systemPreview);
+        }
+        const data = await res.json();
+        next[i] = { imageName: r.imageName, ...data.fields };
+        setRows([...next]);
+        setProgress((p) => ({ ...p, done: p.done + 1 }));
+      } else {
+        const errText = await res.text();
+        console.error('Generate failed:', errText);
+        try {
+          const parsed = JSON.parse(errText) as { error?: string };
+          const msg = parsed?.error || errText;
+          alert(`Generate failed for ${r.imageName}: ${msg}`);
+        } catch {
+          alert(`Generate failed for ${r.imageName}: ${errText}`);
+        }
+        break;
+      }
+    }
+    setIsGenerating(false);
+  };
+
+  const onDownloadCsv = () => {
+    const csv = rowsToCsv(rows);
+    triggerDownloadCsv(csv, "merchalyzer.csv");
+  };
+
+  return (
+    <div className="max-w-7xl mx-auto p-6">
+      <h1 className="text-2xl font-semibold mb-4">Merchalyzer</h1>
+      <div className="grid grid-cols-1 md:grid-cols-[240px_1fr] gap-6">
+        <aside className="md:sticky md:top-4 h-fit border rounded p-3 bg-white">
+          <nav className="space-y-2">
+            <Link href="/" className="block px-2 py-1 rounded hover:bg-gray-100">Generate</Link>
+            <Link href="/edit" className="block px-2 py-1 rounded hover:bg-gray-100">Image Edit</Link>
+            <Link href="/model" className="block px-2 py-1 rounded hover:bg-gray-100">Model</Link>
+            <Link href="/workflow" className="block px-2 py-1 rounded hover:bg-gray-100">Workflow</Link>
+            <Link href="/settings" className="block px-2 py-1 rounded hover:bg-gray-100">Settings</Link>
+          </nav>
+        </aside>
+        <main className="space-y-6">
+          <section id="section-generate" className="space-y-4">
+            <Uploader onFiles={onFiles} />
+
+            <div className="flex gap-3">
+              <button
+                className={`px-3 py-2 rounded text-white flex items-center gap-2 ${isGenerating ? "bg-blue-500/70 cursor-not-allowed" : "bg-blue-600 hover:bg-blue-700"}`}
+                onClick={onGenerateAll}
+                disabled={rows.length === 0 || isGenerating || !instructions || !model}
+              >
+                {isGenerating && (
+                  <span className="inline-block h-4 w-4 animate-spin rounded-full border-2 border-white border-t-transparent" />
+                )}
+                {isGenerating ? `Generating (${progress.done}/${progress.total})` : "Generate"}
+              </button>
+              <button
+                className="px-3 py-2 rounded bg-gray-200"
+                onClick={() => setRows(rows.map((r) => ({ ...r, brand: brand || r.brand })))}
+                disabled={rows.length === 0 || isGenerating}
+              >
+                Bulk apply brand
+              </button>
+              <button
+                className={`px-3 py-2 rounded text-white ${isGenerating ? "bg-gray-600/70 cursor-not-allowed" : "bg-gray-700 hover:bg-gray-800"}`}
+                onClick={onDownloadCsv}
+                disabled={rows.length === 0 || isGenerating}
+              >
+                Download CSV
+              </button>
+            </div>
+
+            <InputsPanel
+              model={model}
+              instructions={instructions}
+              brand={brand}
+              keywords={keywords}
+              onChange={(next) => {
+                if (next.model !== undefined) setModel(next.model);
+                if (next.instructions !== undefined) setInstructions(next.instructions);
+                if (next.brand !== undefined) setBrand(next.brand);
+                if (next.keywords !== undefined) setKeywords(next.keywords);
+              }}
+              showModelSection={false}
+              showInstructionsSection={false}
+              showBrandKeywords={true}
+              showInstructionTemplates={true}
+            />
+
+            <EditableTable
+              rows={rows}
+              setRows={setRows}
+              imageUrls={imageUrls}
+              imageBase64Map={imageBase64Map}
+              model={model}
+              instructions={instructions}
+              defaultBrand={brand}
+              defaultKeywords={keywords}
+            />
+          </section>
+
+          {null}
+        </main>
+      </div>
+    </div>
+  );
+}
