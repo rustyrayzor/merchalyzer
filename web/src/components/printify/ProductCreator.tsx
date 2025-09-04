@@ -54,6 +54,16 @@ export default function ProductCreator({ storeId, templateProduct, trigger, onSu
 
   // Initialize form with template product data if provided
   useEffect(() => {
+    const transformTitle = (raw: string): string => {
+      let t = (raw || '').toString();
+      t = t.replace(/\bdesigns?\b/gi, '');
+      t = t.replace(/\s{2,}/g, ' ').trim();
+      t = t.replace(/[-–—|:;,\.\s]+$/g, '').trim();
+      if (!/t-?shirt\s*$/i.test(t)) {
+        t = `${t} T-Shirt`;
+      }
+      return t.trim();
+    };
     if (templateProduct && isOpen) {
       // Extract design images (non-mockup) by position
       const frontImage = templateProduct.images?.find(img =>
@@ -88,7 +98,7 @@ export default function ProductCreator({ storeId, templateProduct, trigger, onSu
       )?.src || '';
 
       setFormData({
-        title: `${templateProduct.title} (Copy)`,
+        title: transformTitle(`${templateProduct.title}`),
         description: templateProduct.description || '',
         images: {
           front: frontImage,

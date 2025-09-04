@@ -73,8 +73,25 @@ export async function POST(request: NextRequest) {
       ?? (templateProduct as unknown as { print_provider_id?: string | number }).print_provider_id
       ?? (templateProduct as unknown as { print_provider?: { id?: string | number } }).print_provider?.id;
 
+    // Title transform: remove the word "Design" and append "T-Shirt"
+    const transformTitle = (raw: string): string => {
+      let t = (raw || '').toString();
+      // Remove 'Design'/'Designs' tokens (case-insensitive) and adjacent separators/punctuation
+      t = t.replace(/\bdesigns?\b/gi, '');
+      // Collapse extra whitespace
+      t = t.replace(/\s{2,}/g, ' ').trim();
+      // Trim trailing separators after removal
+      t = t.replace(/[-–—|:;,\.\s]+$/g, '').trim();
+      // Append 'T-Shirt' if not already ending with it
+      if (!/t-?shirt\s*$/i.test(t)) {
+        t = `${t} T-Shirt`;
+      }
+      return t.trim();
+    };
+
     // Build product payload for Printify
-    const title = (body.overrides?.title ?? `${templateProduct.title} (Copy)`).trim().slice(0, 255);
+    const rawTitle = (body.overrides?.title ?? `${templateProduct.title} (Copy)`).trim();
+    const title = transformTitle(rawTitle).slice(0, 255);
 
     const printifyProductData: NewProductPayload = {
       title,

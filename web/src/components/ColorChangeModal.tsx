@@ -38,7 +38,8 @@ interface ColorChangeModalProps {
     tolerance: number,
     selectionRects: Array<{ id: string; x: number; y: number; width: number; height: number }>,
     selectionPolygons: Array<{ id: string; points: Array<{ x: number; y: number }> }>,
-    fullColorReplacement: boolean
+    fullColorReplacement: boolean,
+    replaceWithTransparent: boolean
   ) => Promise<void> | void;
   originalImage: WorkflowImage;
 }
@@ -67,6 +68,7 @@ export default function ColorChangeModal({
   const [selectionType, setSelectionType] = useState<'rect' | 'lasso'>('rect');
   const [zoomLevel, setZoomLevel] = useState(1);
   const [fullColorReplacement, setFullColorReplacement] = useState(false);
+  const [replaceWithTransparent, setReplaceWithTransparent] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const imgRef = useRef<HTMLImageElement>(null);
@@ -79,7 +81,15 @@ export default function ColorChangeModal({
     try {
       setIsSubmitting(true);
       // Pass both rectangles and polygons to parent
-      const maybe = onProceed(targetColor, replacementColor, tolerance, selectionRects, selectionPolygons, fullColorReplacement);
+      const maybe = onProceed(
+        targetColor,
+        replacementColor,
+        tolerance,
+        selectionRects,
+        selectionPolygons,
+        fullColorReplacement,
+        replaceWithTransparent
+      );
       if (maybe && typeof maybe.then === 'function') {
         await maybe;
       }
@@ -100,6 +110,7 @@ export default function ColorChangeModal({
     setCurrentRect(null);
     setZoomLevel(1);
     setFullColorReplacement(false);
+    setReplaceWithTransparent(false);
     setPreviewDataUrl(null);
     setOriginalDisplayUrl('');
 
@@ -252,9 +263,9 @@ export default function ColorChangeModal({
 
       // Parse colors
       const targetRgb = hexToRgb(targetColor);
-      const replacementRgb = hexToRgb(replacementColor);
+      const replacementRgb = replaceWithTransparent ? null : hexToRgb(replacementColor);
 
-      if (!targetRgb || !replacementRgb) return;
+      if (!targetRgb) return;
 
       // Precompute scaled polygons for selection checks
       const scaledPolygons = (selectionPolygons || []).map(poly =>
@@ -303,10 +314,15 @@ export default function ColorChangeModal({
 
         if (isInSelection) {
           if (fullColorReplacement) {
-            // Full color replacement: replace ALL pixels in selection with replacement color
-            data[i] = replacementRgb.r;     // R
-            data[i + 1] = replacementRgb.g; // G
-            data[i + 2] = replacementRgb.b; // B
+            // Full color replacement: replace ALL pixels in selection
+            if (replaceWithTransparent) {
+              // Make fully transparent
+              data[i + 3] = 0; // A
+            } else if (replacementRgb) {
+              data[i] = replacementRgb.r;     // R
+              data[i + 1] = replacementRgb.g; // G
+              data[i + 2] = replacementRgb.b; // B
+            }
           } else {
             // Tolerance-based replacement: only replace pixels that match target color within tolerance
             const r = data[i];
@@ -322,9 +338,13 @@ export default function ColorChangeModal({
 
             // Replace if within tolerance
             if (distance <= tolerance) {
-              data[i] = replacementRgb.r;     // R
-              data[i + 1] = replacementRgb.g; // G
-              data[i + 2] = replacementRgb.b; // B
+              if (replaceWithTransparent) {
+                data[i + 3] = 0; // A
+              } else if (replacementRgb) {
+                data[i] = replacementRgb.r;     // R
+                data[i + 1] = replacementRgb.g; // G
+                data[i + 2] = replacementRgb.b; // B
+              }
             }
           }
         }
@@ -346,7 +366,7 @@ export default function ColorChangeModal({
       } catch {}
       setIsGeneratingPreview(false);
     }
-  }, [targetColor, replacementColor, tolerance, selectionRects, selectionPolygons, fullColorReplacement, originalImage]);
+  }, [targetColor, replacementColor, tolerance, selectionRects, selectionPolygons, fullColorReplacement, originalImage, replaceWithTransparent]);
 
   // Helper function to convert hex to RGB
   const hexToRgb = (hex: string): { r: number; g: number; b: number } | null => {
@@ -471,7 +491,7 @@ export default function ColorChangeModal({
     if (isOpen && originalImage) {
       generatePreview();
     }
-  }, [targetColor, replacementColor, tolerance, selectionRects, selectionPolygons, zoomLevel, fullColorReplacement, isOpen, originalImage, generatePreview]);
+  }, [targetColor, replacementColor, tolerance, selectionRects, selectionPolygons, zoomLevel, fullColorReplacement, isOpen, originalImage, generatePreview, replaceWithTransparent]);
 
   return (
     <Sheet open={isOpen} onOpenChange={handleClose}>
@@ -955,31 +975,68 @@ export default function ColorChangeModal({
                 </p>
               </div>
 
-              {/* Replacement Color */}
+              {/* Replacement Color */
+              }
               <div className="space-y-3">
                 <label className="block text-sm font-medium text-gray-700">
                   Replacement Color (New Color)
                 </label>
                 <div className="flex items-center space-x-3">
                   <div
-                    className="w-12 h-12 rounded-lg border-2 border-gray-300"
-                    style={{ backgroundColor: replacementColor }}
+                    className="w-12 h-12 rounded-lg border-2 border-gray-300 overflow-hidden"
+                    style={
+                      replaceWithTransparent
+                        ? {
+                            backgroundImage:
+                              'linear-gradient(45deg, #e5e7eb 25%, transparent 25%),\n                              linear-gradient(-45deg, #e5e7eb 25%, transparent 25%),\n                              linear-gradient(45deg, transparent 75%, #e5e7eb 75%),\n                              linear-gradient(-45deg, transparent 75%, #e5e7eb 75%)',
+                            backgroundSize: '16px 16px',
+                            backgroundPosition: '0 0, 0 8px, 8px -8px, -8px 0px',
+                          }
+                        : { backgroundColor: replacementColor }
+                    }
+                    title={replaceWithTransparent ? 'Transparent' : undefined}
                   />
                   <input
                     type="color"
                     value={replacementColor}
-                    onChange={(e) => setReplacementColor(e.target.value)}
-                    className="h-12 w-16 rounded border border-gray-300 cursor-pointer"
+                    onChange={(e) => {
+                      if (replaceWithTransparent) setReplaceWithTransparent(false);
+                      setReplacementColor(e.target.value);
+                    }}
+                    className="h-12 w-16 rounded border border-gray-300 cursor-pointer disabled:opacity-50"
+                    disabled={replaceWithTransparent}
                   />
                   <div className="text-sm text-gray-600">
-                    <div>Hex: {replacementColor.toUpperCase()}</div>
-                    <div className="text-xs text-gray-500">Click to pick color</div>
+                    <div>
+                      {replaceWithTransparent ? 'Transparent' : `Hex: ${replacementColor.toUpperCase()}`}
+                    </div>
+                    <div className="text-xs text-gray-500">
+                      {replaceWithTransparent ? 'Selected pixels will be erased' : 'Click to pick color'}
+                    </div>
                   </div>
                 </div>
 
                 {/* Quick Select Colors */}
                 <div className="flex flex-wrap gap-2">
                   <span className="text-xs text-gray-500 mr-2">Quick select:</span>
+                  {/* Transparent swatch */}
+                  <button
+                    onClick={() => setReplaceWithTransparent(true)}
+                    className={`w-8 h-8 rounded border-2 transition-all flex items-center justify-center text-[10px] font-medium ${
+                      replaceWithTransparent
+                        ? 'border-blue-500 ring-2 ring-blue-200'
+                        : 'border-gray-300 hover:border-gray-400'
+                    }`}
+                    style={{
+                      backgroundImage:
+                        'linear-gradient(45deg, #e5e7eb 25%, transparent 25%),\n                        linear-gradient(-45deg, #e5e7eb 25%, transparent 25%),\n                        linear-gradient(45deg, transparent 75%, #e5e7eb 75%),\n                        linear-gradient(-45deg, transparent 75%, #e5e7eb 75%)',
+                      backgroundSize: '16px 16px',
+                      backgroundPosition: '0 0, 0 8px, 8px -8px, -8px 0px',
+                    }}
+                    title="Transparent"
+                  >
+                    T
+                  </button>
                   {[
                     { name: 'White', color: '#ffffff' },
                     { name: 'Black', color: '#000000' },
@@ -990,9 +1047,12 @@ export default function ColorChangeModal({
                   ].map(({ name, color }) => (
                     <button
                       key={color}
-                      onClick={() => setReplacementColor(color)}
+                      onClick={() => {
+                        if (replaceWithTransparent) setReplaceWithTransparent(false);
+                        setReplacementColor(color);
+                      }}
                       className={`w-8 h-8 rounded border-2 transition-all ${
-                        replacementColor === color
+                        !replaceWithTransparent && replacementColor === color
                           ? 'border-blue-500 ring-2 ring-blue-200'
                           : 'border-gray-300 hover:border-gray-400'
                       }`}
@@ -1001,9 +1061,21 @@ export default function ColorChangeModal({
                     />
                   ))}
                 </div>
+                <div className="flex items-center gap-2 pt-1">
+                  <Checkbox
+                    id="replace-with-transparent"
+                    checked={replaceWithTransparent}
+                    onCheckedChange={(checked) => setReplaceWithTransparent(!!checked)}
+                  />
+                  <label htmlFor="replace-with-transparent" className="text-xs text-gray-700">
+                    Replace with transparency (delete color)
+                  </label>
+                </div>
 
                 <p className="text-xs text-gray-600">
-                  Select the new color to replace the target color with (e.g., white text)
+                  {replaceWithTransparent
+                    ? 'Selected pixels become fully transparent.'
+                    : 'Select the new color to replace the target color with (e.g., white text)'}
                 </p>
               </div>
             </div>

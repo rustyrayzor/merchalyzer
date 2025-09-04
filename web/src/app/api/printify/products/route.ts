@@ -114,11 +114,19 @@ export async function GET(request: NextRequest) {
     // totalCount: total from Printify (store-wide), not just the page
     const totalCount = typeof total === 'number' ? total : filteredProducts.length;
 
+    // Determine if there are more products to load. Use raw page data (pre-filter)
+    // so searches/tags don't hide the option to fetch next pages.
+    const hasMore =
+      typeof total === 'number'
+        ? parsedOffset + pageProducts.length < total
+        : pageProducts.length === parsedLimit;
+
     return NextResponse.json({
       success: true,
       data: filteredProducts,
       count: filteredProducts.length,
       totalCount,
+      hasMore,
       storeId,
       filters: {
         search: search || null,

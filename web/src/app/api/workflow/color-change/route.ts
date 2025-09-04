@@ -18,6 +18,7 @@ export async function POST(request: NextRequest) {
     const replacementColor = formData.get('replacementColor') as string;
     const tolerance = parseInt(formData.get('tolerance') as string) || 30;
     const fullColorReplacement = formData.get('fullColorReplacement') === 'true';
+    const replaceWithTransparent = formData.get('replaceWithTransparent') === 'true';
 
     // Get selection rectangle parameters
     const selectionCount = formData.get('selectionCount') ? parseInt(formData.get('selectionCount') as string) : 0;
@@ -56,8 +57,11 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'No image provided' }, { status: 400 });
     }
 
-    if (!targetColor || !replacementColor) {
-      return NextResponse.json({ error: 'Target color and replacement color are required' }, { status: 400 });
+    if (!targetColor) {
+      return NextResponse.json({ error: 'Target color is required' }, { status: 400 });
+    }
+    if (!replaceWithTransparent && !replacementColor) {
+      return NextResponse.json({ error: 'Replacement color is required unless replacing with transparency' }, { status: 400 });
     }
 
     // Convert File to Buffer
@@ -65,7 +69,7 @@ export async function POST(request: NextRequest) {
     const buffer = Buffer.from(arrayBuffer);
 
     console.log(`🎨 Processing color change: ${file.name} (${file.size} bytes)`);
-    console.log(`🎯 Target color: ${targetColor}, Replacement: ${replacementColor}, Tolerance: ${tolerance}`);
+    console.log(`🎯 Target color: ${targetColor}, Replacement: ${replaceWithTransparent ? 'TRANSPARENT' : replacementColor}, Tolerance: ${tolerance}`);
 
     // Parse target color (hex to RGB)
     const targetRgb = hexToRgb(targetColor);
@@ -73,9 +77,9 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Invalid target color format. Use hex format like #ff0000' }, { status: 400 });
     }
 
-    // Parse replacement color (hex to RGB)
-    const replacementRgb = hexToRgb(replacementColor);
-    if (!replacementRgb) {
+    // Parse replacement color (hex to RGB) if not transparent
+    const replacementRgb = replaceWithTransparent ? null : hexToRgb(replacementColor);
+    if (!replaceWithTransparent && !replacementRgb) {
       return NextResponse.json({ error: 'Invalid replacement color format. Use hex format like #ffffff' }, { status: 400 });
     }
 
@@ -101,10 +105,15 @@ export async function POST(request: NextRequest) {
       const b = data[idx + 2];
       const a = channels === 4 ? data[idx + 3] : 255;
       if (fullColorReplacement) {
-        newData[idx] = replacementRgb.r;
-        newData[idx + 1] = replacementRgb.g;
-        newData[idx + 2] = replacementRgb.b;
-        newData[idx + 3] = a;
+        if (replaceWithTransparent) {
+          // Make pixel fully transparent
+          newData[idx + 3] = 0;
+        } else if (replacementRgb) {
+          newData[idx] = replacementRgb.r;
+          newData[idx + 1] = replacementRgb.g;
+          newData[idx + 2] = replacementRgb.b;
+          newData[idx + 3] = a;
+        }
       } else {
         // Compare squared distance to avoid costly sqrt
         const dr = r - targetRgb.r;
@@ -112,10 +121,14 @@ export async function POST(request: NextRequest) {
         const db = b - targetRgb.b;
         const distSq = dr * dr + dg * dg + db * db;
         if (distSq <= tolSq) {
-          newData[idx] = replacementRgb.r;
-          newData[idx + 1] = replacementRgb.g;
-          newData[idx + 2] = replacementRgb.b;
-          newData[idx + 3] = a;
+          if (replaceWithTransparent) {
+            newData[idx + 3] = 0;
+          } else if (replacementRgb) {
+            newData[idx] = replacementRgb.r;
+            newData[idx + 1] = replacementRgb.g;
+            newData[idx + 2] = replacementRgb.b;
+            newData[idx + 3] = a;
+          }
         }
       }
     };

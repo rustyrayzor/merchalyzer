@@ -1,15 +1,15 @@
 import { useState, useEffect } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { Button } from '@/components/ui/button';
-import { Workflow, Edit, Settings, Cog, Store } from 'lucide-react';
+import { Workflow, Edit, Cog, Store, Wand2 } from 'lucide-react';
 import WorkflowPage from './pages/WorkflowPage';
 import EditPage from './pages/EditPage';
-import ModelPage from './pages/ModelPage';
 import SettingsPage from './pages/SettingsPage';
 import PrintifyPage from './pages/PrintifyPage';
+import DesignGeneratorPage from './pages/DesignGeneratorPage';
 import { cn } from '@/lib/utils';
 
-export type PageType = 'workflow' | 'edit' | 'model' | 'settings' | 'printify';
+export type PageType = 'workflow' | 'edit' | 'settings' | 'printify' | 'designs';
 
 interface NavigationItem {
   id: PageType;
@@ -20,8 +20,8 @@ interface NavigationItem {
 
 const navigationItems: NavigationItem[] = [
   { id: 'workflow', label: 'Workflow', icon: Workflow, component: WorkflowPage },
+  { id: 'designs', label: 'Design Generator', icon: Wand2, component: DesignGeneratorPage },
   { id: 'edit', label: 'Image Edit', icon: Edit, component: EditPage },
-  { id: 'model', label: 'Model', icon: Settings, component: ModelPage },
   { id: 'printify', label: 'Printify', icon: Store, component: PrintifyPage },
   { id: 'settings', label: 'Settings', icon: Cog, component: SettingsPage },
 ];
@@ -89,10 +89,10 @@ export default function Navigation() {
     switch (pageId) {
       case 'workflow':
         return 'Workflow';
+      case 'designs':
+        return 'Design Generator';
       case 'edit':
         return 'Image Edit';
-      case 'model':
-        return 'Model';
       case 'printify':
         return 'Printify';
       case 'settings':

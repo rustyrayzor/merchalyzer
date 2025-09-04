@@ -62,7 +62,51 @@ fi
 print_status "Creating remote deployment directory..."
 ssh -i "$SSH_KEY_PATH" "$REMOTE_USER@$REMOTE_HOST" "mkdir -p $REMOTE_PATH"
 
-# Copy project files to remote server
+# Prepare environment file for container
+print_status "Preparing production env file (secrets) ..."
+
+# Build a temporary env file for deployment without committing secrets
+TMP_ENV="env.production.deploy"
+
+# Load base values from existing file if present, otherwise create sensible defaults
+if [ -f "env.production" ]; then
+  cp env.production "$TMP_ENV"
+else
+  cat > "$TMP_ENV" << EOF
+NODE_ENV=production
+PORT=3000
+NEXT_PUBLIC_API_URL=http://$REMOTE_HOST:3030
+EOF
+fi
+
+# Helper to read a key from local env or .env.local
+read_key() {
+  local key="$1"
+  local val="${!key}"
+  if [ -z "$val" ] && [ -f "web/.env.local" ]; then
+    val=$(grep -m1 "^$key=" web/.env.local | cut -d'=' -f2-)
+  fi
+  echo "$val"
+}
+
+# Ensure required secrets are present in the temp env file (do not echo values)
+ensure_key() {
+  local key="$1"
+  local val
+  if ! grep -q "^$key=" "$TMP_ENV" 2>/dev/null; then
+    val=$(read_key "$key")
+    if [ -n "$val" ]; then
+      echo "$key=$val" >> "$TMP_ENV"
+    fi
+  fi
+}
+
+# Common secrets for the app (add as needed)
+ensure_key PRINTIFY_API_KEY
+ensure_key OPENROUTER_API_KEY
+ensure_key REMBG_API_KEY
+ensure_key REM_BG_API_KEY
+
 print_status "Copying project files to remote server..."
 print_warning "Using tar/scp for file transfer (this may take a while)..."
 
@@ -79,6 +123,7 @@ tmp
 *.log
 deploy_temp.tar.gz
 deploy_excludes.txt
+env.production
 EOF
 
 # Create tar archive excluding unwanted files
@@ -89,12 +134,16 @@ tar -czf "$TEMP_TAR" --exclude-from="$EXCLUDE_FILE" --exclude="node_modules" --e
 print_warning "Transferring files to remote server..."
 scp -i "$SSH_KEY_PATH" "$TEMP_TAR" "$REMOTE_USER@$REMOTE_HOST:$REMOTE_PATH/"
 
+# Transfer the generated env file separately (not stored in git)
+print_status "Uploading env.production (generated) ..."
+scp -i "$SSH_KEY_PATH" "$TMP_ENV" "$REMOTE_USER@$REMOTE_HOST:$REMOTE_PATH/env.production"
+
 # Extract on remote server
 print_warning "Extracting files on remote server..."
 ssh -i "$SSH_KEY_PATH" "$REMOTE_USER@$REMOTE_HOST" "cd $REMOTE_PATH && tar -xzf $TEMP_TAR && rm $TEMP_TAR"
 
 # Cleanup local temp files
-rm -f "$TEMP_TAR" "$EXCLUDE_FILE"
+rm -f "$TEMP_TAR" "$EXCLUDE_FILE" "$TMP_ENV"
 
 # Build and deploy on remote server
 print_status "Building and deploying application..."

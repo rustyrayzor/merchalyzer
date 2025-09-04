@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import InputsPanel from "@/components/InputsPanel";
-import { loadDefaultModel, loadDefaultBrand, loadDefaultKeywords } from "@/lib/storage";
+import { loadDefaultModel, loadDefaultBrand, loadDefaultKeywords, saveDefaultModel } from "@/lib/storage";
 import { cn } from "@/lib/utils";
 
 export default function ModelPage() {
@@ -50,7 +50,11 @@ export default function ModelPage() {
           brand={brand}
           keywords={keywords}
           onChange={(next) => {
-            if (next.model !== undefined) setModel(next.model);
+            if (next.model !== undefined) {
+              setModel(next.model);
+              // Persist selection so Workflow generation picks it up
+              saveDefaultModel(next.model);
+            }
             if (next.instructions !== undefined) setInstructions(next.instructions);
             if (next.brand !== undefined) setBrand(next.brand);
             if (next.keywords !== undefined) setKeywords(next.keywords);

@@ -30,6 +30,7 @@ interface InputsPanelProps {
 const DEFAULT_MODELS: Array<{ value: string; label: string; vision?: boolean }> = [
   { value: "openrouter/auto", label: "OpenRouter Auto" },
   { value: "meta-llama/llama-3.1-70b-instruct", label: "Llama 3.1 70B" },
+  { value: "openai/gpt-5-mini", label: "OpenAI GPT-5 Mini (Vision)", vision: true },
   { value: "openai/gpt-4o-mini-2024-07-18", label: "GPT-4o mini", vision: true },
   { value: "meta-llama/llama-4-maverick:free", label: "Llama 4 Maverick (Vision, free)", vision: true },
   { value: "google/gemini-2.5-flash-image-preview", label: "Gemini 2.5 Flash (Vision)", vision: true },
@@ -115,8 +116,9 @@ export default function InputsPanel({
     const found = allModelOptions.find(opt => opt.value === model);
     return found?.value || allModelOptions[0]?.value || model;
   }, [model, allModelOptions]);
+  const singleColumn = !showInstructionsSection && !showBrandKeywords && !showInstructionTemplates;
   return (
-    <div className="w-full grid gap-3 sm:grid-cols-2">
+    <div className={`w-full grid gap-3 ${singleColumn ? 'grid-cols-1' : 'sm:grid-cols-2'}`}>
       {showModelSection && (
       <div className="flex flex-col gap-1 relative">
         {flash && (
@@ -200,14 +202,13 @@ export default function InputsPanel({
             <CardTitle className="text-sm">Model presets</CardTitle>
           </CardHeader>
           <CardContent className="space-y-3">
-            <div className="grid sm:grid-cols-3 gap-2">
+            <div className="grid grid-cols-1 gap-2">
               <Input
                 placeholder="Preset label (e.g. My GPT-4o)"
                 value={newPresetLabel}
                 onChange={(e) => setNewPresetLabel(e.target.value)}
               />
               <Input
-                className="sm:col-span-2"
                 placeholder="Paste OpenRouter model id (e.g. openrouter/auto)"
                 value={newPresetModel}
                 onChange={(e) => setNewPresetModel(e.target.value)}
@@ -222,7 +223,7 @@ export default function InputsPanel({
                   id: `${Date.now()}`,
                   label: newPresetLabel.trim(),
                   model: newPresetModel.trim(),
-                  vision: /vision|gpt-4o|image|multimodal|llava|gemini|claude-3|gpt-4v|llama-4|maverick/i.test(newPresetModel.trim()),
+                  vision: /vision|gpt-5|gpt-4o|image|multimodal|llava|gemini|claude-3|gpt-4v|llama-4|maverick/i.test(newPresetModel.trim()),
                 };
                 const updated = saveModelPreset(preset);
                 setPresets(updated);
@@ -502,5 +503,3 @@ export default function InputsPanel({
     </div>
   );
 }
-
-

@@ -135,7 +135,7 @@ export default function EditorModelSelector({ model, onModelChange }: EditorMode
                     id: `${Date.now()}`,
                     label: newPresetLabel.trim(),
                     model: newPresetModel.trim(),
-                    vision: /vision|image|gemini|gpt-4o|llama-4|maverick/i.test(newPresetModel.trim()),
+                    vision: /vision|image|gemini|gpt-5|gpt-4o|llama-4|maverick/i.test(newPresetModel.trim()),
                   };
                   const updated = saveEditModelPreset(preset);
                   setPresets(updated);

@@ -2,7 +2,7 @@
 
 import { useState, useCallback, useEffect } from 'react';
 import { WorkflowImage } from '@/lib/types';
-import { loadDefaultModel, loadWorkflowImages, saveWorkflowImages, clearWorkflowImages, checkStorageQuota, clearAllStorage, saveWorkflowImagesIndexedDB, loadWorkflowImagesIndexedDB, clearWorkflowImagesIndexedDB, getIndexedDBStorageInfo, clearProcessedFolder } from '@/lib/storage';
+import { loadDefaultModel, loadWorkflowImages, saveWorkflowImages, clearWorkflowImages, checkStorageQuota, clearAllStorage, saveWorkflowImagesIndexedDB, loadWorkflowImagesIndexedDB, clearWorkflowImagesIndexedDB, getIndexedDBStorageInfo, clearProcessedFolder, loadBgRemovalProvider } from '@/lib/storage';
 import { createZipWithCsvAndImages, ImageData } from '@/lib/csv';
 import { generateUUID } from '@/lib/utils';
 import BatchToolbar from './BatchToolbar';
@@ -15,12 +15,14 @@ import { Upload, Trash2 } from 'lucide-react';
 
 // Vision-capable models for text generation (ordered by preference)
 const VISION_MODELS = [
+  'openai/gpt-5-mini',                    // GPT-5 Mini (vision)
   'openai/gpt-4o-mini-2024-07-18',           // Primary fallback
   'openai/gpt-4o-2024-08-06',               // GPT-4o full
   'meta-llama/llama-4-maverick:free',       // Free Llama
   'google/gemini-2.5-flash-image-preview',  // Gemini
   'google/gemini-2.5-flash-image-preview:free', // Free Gemini
-  'anthropic/claude-3-5-sonnet-20241022',   // Claude
+  'anthropic/claude-3.5-sonnet-20241022',   // Claude Sonnet
+  'anthropic/claude-3.5-haiku-20241022',    // Claude Haiku
 ];
 
 export default function ImageManager() {
@@ -55,6 +57,8 @@ export default function ImageManager() {
 
         // Special cases for common model names
         const commonNames = {
+          'gpt-5-mini': ['gpt-5-mini', 'gpt5-mini', 'gpt5mini'],
+          'gpt-5': ['gpt-5', 'gpt5'],
           'gpt-4o-mini': ['gpt-4o-mini', 'gpt4o-mini', 'gpt4omini'],
           'gpt-4o': ['gpt-4o', 'gpt4o'],
           'gemini': ['gemini', 'gemini-flash'],
@@ -468,6 +472,14 @@ export default function ImageManager() {
           throw new Error(`Generation failed: ${response.statusText}`);
         }
 
+        // Debug: surface which model was actually used and prompt previews
+        const modelUsed = response.headers.get('X-Model-Used') || '';
+        const promptPreview = response.headers.get('X-User-Prompt-Preview') || '';
+        const systemPreview = response.headers.get('X-System-Prompt-Preview') || '';
+        if (modelUsed) console.log('🧠 Generation model used:', modelUsed);
+        if (promptPreview) console.log('📝 Prompt preview:', promptPreview);
+        if (systemPreview) console.log('⚙️ System prompt preview:', systemPreview);
+
         const data = await response.json();
         const generatedFields = data.fields;
 
@@ -533,7 +545,10 @@ export default function ImageManager() {
             endpoint = '/api/workflow/scale';
             break;
           case 'remove-bg':
-            endpoint = '/api/workflow/remove-bg';
+            {
+              const provider = loadBgRemovalProvider();
+              endpoint = `/api/workflow/remove-bg?provider=${encodeURIComponent(provider || 'pixelcut')}`;
+            }
             break;
           case 'upscale':
             endpoint = '/api/workflow/upscale';
@@ -808,7 +823,8 @@ export default function ImageManager() {
     tolerance: number = 30,
     selectionRects?: Array<{ id: string; x: number; y: number; width: number; height: number }>,
     selectionPolygons?: Array<{ id: string; points: Array<{ x: number; y: number }> }>,
-    fullColorReplacement?: boolean
+    fullColorReplacement?: boolean,
+    replaceWithTransparent?: boolean
   ) => {
     if (!selectedImageForColorChange) return;
 
@@ -855,6 +871,7 @@ export default function ImageManager() {
       formData.append('replacementColor', replacementColor);
       formData.append('tolerance', tolerance.toString());
       formData.append('fullColorReplacement', fullColorReplacement ? 'true' : 'false');
+      formData.append('replaceWithTransparent', replaceWithTransparent ? 'true' : 'false');
 
       // Add selection rectangles if provided
       if (selectionRects && selectionRects.length > 0) {

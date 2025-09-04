@@ -61,11 +61,12 @@ export async function callOpenRouter(
 		top_p: 0,
 	};
 
-	// Only set response_format for non-Gemini models when images are NOT present
-	// Gemini doesn't support response_format when images are included
-	const payload = !isGemini || !imageBase64
-		? { ...basePayload, response_format: { type: 'json_object' } }
-		: basePayload;
+    // Only set response_format for non-Gemini models when images are NOT present
+    // Some providers (incl. Anthropic via OpenRouter) reject/ignore response_format with images
+    const useResponseFormat = !isGemini && !imageBase64;
+    const payload: ChatCompletionsRequest = useResponseFormat
+        ? { ...basePayload, response_format: { type: 'json_object' } }
+        : basePayload;
 
 	let res = await fetch(OPENROUTER_URL, {
 		method: 'POST',
@@ -99,12 +100,30 @@ export async function callOpenRouter(
 			throw new Error(`OpenRouter error ${res.status}: ${text}`);
 		}
 	}
-	const data = await res.json() as ChatCompletionsResponse;
-	const content: string = data?.choices?.[0]?.message?.content ?? '';
-	if (!content) {
-		throw new Error('Empty response from model');
-	}
-	return content;
+    let data = await res.json() as ChatCompletionsResponse;
+    let content: string = data?.choices?.[0]?.message?.content ?? '';
+
+    // Fallback: if provider returned 200 but empty content (seen with some models when json mode conflicts),
+    // retry once without response_format.
+    if (!content && useResponseFormat) {
+        console.warn('Empty content with response_format; retrying without response_format');
+        const retryRes = await fetch(OPENROUTER_URL, {
+            method: 'POST',
+            headers,
+            body: JSON.stringify(basePayload),
+        });
+        if (!retryRes.ok) {
+            const text = await retryRes.text();
+            throw new Error(`OpenRouter error ${retryRes.status} (retry): ${text}`);
+        }
+        data = await retryRes.json() as ChatCompletionsResponse;
+        content = data?.choices?.[0]?.message?.content ?? '';
+    }
+
+    if (!content) {
+        throw new Error('Empty response from model');
+    }
+    return content;
 }
 
 export function safeParseJson<T>(raw: string): T {

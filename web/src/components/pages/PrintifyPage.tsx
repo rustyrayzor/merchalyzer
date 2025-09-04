@@ -1,14 +1,18 @@
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useRef } from 'react';
+import Image from 'next/image';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
+import { Checkbox } from '@/components/ui/checkbox';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Loader2, Store, Package, AlertCircle, Search, Filter, X, Copy, Plus, Trash2, Upload } from 'lucide-react';
+import { Loader2, Store, Package, AlertCircle, Search, Filter, X, Copy, Plus, Trash2, Upload, Tag, Check, LayoutGrid, List, Pencil } from 'lucide-react';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { cn, formatCentsUSD } from '@/lib/utils';
 import { PrintifyStore, PrintifyProduct } from '@/lib/types';
 import ProductCreator from '@/components/printify/ProductCreator';
+import TagInput from '@/components/ui/tag-input';
 
 interface StoresResponse {
   success: boolean;
@@ -23,6 +27,7 @@ interface ProductsResponse {
   data?: PrintifyProduct[];
   count?: number;
   totalCount?: number;
+  hasMore?: boolean;
   storeId?: string;
   error?: string;
   details?: string;
@@ -51,21 +56,41 @@ export default function PrintifyPage() {
   const [products, setProducts] = useState<PrintifyProduct[]>([]);
   const [loadingProducts, setLoadingProducts] = useState(false);
   // Removed unused productsError state
-  const [totalProducts, setTotalProducts] = useState(0);
+  // const [totalProducts, setTotalProducts] = useState(0); // unused
   const [pageOffset, setPageOffset] = useState(0);
-  const PAGE_LIMIT = 20;
+  const [hasMore, setHasMore] = useState(false);
+  const PAGE_LIMIT = 50;
   const [availableTags, setAvailableTags] = useState<string[]>([]);
   const [bulkCsv, setBulkCsv] = useState<File | null>(null);
   const [bulkTemplateId, setBulkTemplateId] = useState<string>('');
   const [bulkStatus, setBulkStatus] = useState<{ running: boolean; created: number; failed: number; total: number; message?: string } | null>(null);
   const [bulkResults, setBulkResults] = useState<Array<{ title: string; imageName: string; success: boolean; error?: string }>>([]);
   const [activeTab, setActiveTab] = useState<'products' | 'bulk'>('products');
+  // Bulk preview/mapping state
+  const [bulkFolderFiles, setBulkFolderFiles] = useState<File[]>([]);
+  const [bulkRowsPreview, setBulkRowsPreview] = useState<Array<{ title: string; imageName: string; file?: File; previewUrl?: string; matched: boolean; selected: boolean }>>([]);
+  const dropRef = useRef<HTMLDivElement | null>(null);
   const [filters, setFilters] = useState<ProductFilters>({
     search: '',
     status: 'all',
     tag: '',
     showFilters: false,
   });
+  const [viewMode, setViewMode] = useState<'list' | 'grid'>('list');
+
+  const applyUpdatedTags = (productId: string, newTags: string[]) => {
+    setProducts(prev => {
+      const next = prev.map(p => (p.id === productId ? { ...p, tags: newTags } : p));
+      const all = new Set<string>();
+      next.forEach(p => p.tags?.forEach(t => all.add(t)));
+      setAvailableTags(Array.from(all).sort());
+      return next;
+    });
+  };
+
+  const applyUpdatedTitle = (productId: string, newTitle: string) => {
+    setProducts(prev => prev.map(p => (p.id === productId ? { ...p, title: newTitle } : p)));
+  };
 
   useEffect(() => {
     const timer = setTimeout(() => {
@@ -132,9 +157,33 @@ export default function PrintifyPage() {
         throw new Error(data.details || data.error || 'Failed to fetch products');
       }
 
-      setProducts(prev => (options?.append ? [...prev, ...(data.data || [])] : (data.data || [])));
-      setTotalProducts(data.totalCount || data.count || 0);
+      setProducts(prev => {
+        const incoming = data.data || [];
+        if (options?.append) {
+          const seen = new Set(prev.map(p => p.id));
+          const merged = [...prev];
+          for (const p of incoming) {
+            if (!seen.has(p.id)) {
+              merged.push(p);
+              seen.add(p.id);
+            }
+          }
+          return merged;
+        }
+        // On refresh, ensure uniqueness as well
+        const deduped: PrintifyProduct[] = [];
+        const seen = new Set<string>();
+        for (const p of incoming) {
+          if (!seen.has(p.id)) {
+            deduped.push(p);
+            seen.add(p.id);
+          }
+        }
+        return deduped;
+      });
+      // total count unused in UI
       setPageOffset(effectiveOffset);
+      setHasMore(Boolean(data.hasMore ?? ((data.data?.length || 0) === PAGE_LIMIT)));
 
       // Extract all available tags from products
       const allTags = new Set<string>();
@@ -161,6 +210,7 @@ export default function PrintifyPage() {
     });
     setProducts([]);
     setPageOffset(0);
+    setHasMore(false);
     fetchProducts(store.id.toString(), { offset: 0, append: false });
   };
 
@@ -186,6 +236,7 @@ export default function PrintifyPage() {
     const debounceTimer = setTimeout(() => {
       setProducts([]);
       setPageOffset(0);
+      setHasMore(false);
       fetchProducts(selectedStore.id.toString(), { offset: 0, append: false });
     }, 300); // 300ms debounce
 
@@ -201,6 +252,139 @@ export default function PrintifyPage() {
     }
     // TODO: Show success toast/notification
     console.log('Product created successfully:', newProduct);
+  };
+
+  // Helpers for bulk flow
+  const parseCsvToRows = async (csvFile: File): Promise<Array<{ title: string; imageName: string }>> => {
+    const text = await csvFile.text();
+    const lines = text.split(/\r?\n/).filter(l => l.trim().length > 0);
+    if (lines.length < 2) throw new Error('CSV must include header and at least one row');
+    const headers = lines[0].split(',').map(h => h.trim().toLowerCase());
+    const titleIdx = headers.findIndex(h => h === 'title' || h === 'tile');
+    const imageIdx = headers.findIndex(h => h === 'image name' || h === 'imagename' || h === 'image');
+    if (titleIdx === -1 || imageIdx === -1) throw new Error('CSV needs "Title" and "Image Name" headers');
+    const rows = lines.slice(1).map(line => {
+      const parts = line.split(',');
+      return {
+        title: (parts[titleIdx] || '').trim(),
+        imageName: (parts[imageIdx] || '').trim(),
+      };
+    }).filter(r => r.title && r.imageName);
+    return rows;
+  };
+
+  const mapRowsToFolder = (rows: Array<{ title: string; imageName: string }>, files: File[]) => {
+    // Build index by lowercase basename and basename without extension
+    const byBase: Map<string, File> = new Map();
+    const byStem: Map<string, File> = new Map();
+    for (const f of files) {
+      const name = (f.name || '').toLowerCase();
+      const stem = name.includes('.') ? name.slice(0, name.lastIndexOf('.')) : name;
+      byBase.set(name, f);
+      if (!byStem.has(stem)) byStem.set(stem, f);
+    }
+    // Revoke any previous object URLs
+    setBulkRowsPreview(prev => {
+      prev.forEach(p => { if (p.previewUrl) URL.revokeObjectURL(p.previewUrl); });
+      return prev;
+    });
+    const mapped = rows.map(r => {
+      const wanted = (r.imageName || '').split(/[/\\]/).pop()!.toLowerCase();
+      const stem = wanted.includes('.') ? wanted.slice(0, wanted.lastIndexOf('.')) : wanted;
+      let f: File | undefined = byBase.get(wanted);
+      if (!f) {
+        // try by stem if CSV omits or differs by extension
+        f = byStem.get(stem);
+      }
+      const previewUrl = f ? URL.createObjectURL(f) : undefined;
+      return { title: r.title, imageName: r.imageName, file: f, previewUrl, matched: Boolean(f), selected: Boolean(f) };
+    });
+    setBulkRowsPreview(mapped);
+  };
+
+  const handleFolderInput = (fileList: FileList | null) => {
+    const all = fileList ? Array.from(fileList) : [];
+    const images = all.filter(f => f.type.startsWith('image/') || /\.(png|jpe?g|webp|gif)$/i.test(f.name));
+    setBulkFolderFiles(images);
+    const csvCandidates = all.filter(f => /\.csv$/i.test(f.name));
+    const pickedCsv = csvCandidates[0] || null;
+    if (pickedCsv) setBulkCsv(pickedCsv);
+    const csvToUse = pickedCsv || bulkCsv;
+    if (csvToUse) {
+      parseCsvToRows(csvToUse).then(rows => mapRowsToFolder(rows, images)).catch(err => {
+        console.error('CSV parse error:', err);
+        setBulkRowsPreview([]);
+      });
+    }
+  };
+
+  // Drag & drop folder support (recursively traverses directories)
+  type FileSystemEntry = {
+    isFile: boolean;
+    isDirectory: boolean;
+    file: (cb: (file: File) => void) => void;
+    createReader: () => { readEntries: (cb: (entries: FileSystemEntry[]) => void) => void };
+  };
+
+  const gatherFilesFromItems = async (items: DataTransferItemList): Promise<File[]> => {
+    const traverseEntry = async (entry: FileSystemEntry | null): Promise<File[]> => {
+      return new Promise((resolve) => {
+        if (!entry) return resolve([]);
+        if (entry.isFile) {
+          entry.file((file: File) => resolve([file]));
+        } else if (entry.isDirectory) {
+          const reader = entry.createReader();
+          reader.readEntries(async (entries: FileSystemEntry[]) => {
+            const batches = await Promise.all(entries.map(traverseEntry));
+            resolve(batches.flat());
+          });
+        } else {
+          resolve([]);
+        }
+      });
+    };
+    const promises: Promise<File[]>[] = [];
+    for (let i = 0; i < items.length; i++) {
+      const it = items[i]!;
+      const entry = (it as unknown as { webkitGetAsEntry?: () => FileSystemEntry | null }).webkitGetAsEntry?.() || null;
+      if (entry) promises.push(traverseEntry(entry));
+      else {
+        const file = it.getAsFile();
+        if (file) promises.push(Promise.resolve([file]));
+      }
+    }
+    return (await Promise.all(promises)).flat();
+  };
+
+  const handleDropOnZone = async (e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const items = e.dataTransfer?.items;
+    let allFiles: File[] = [];
+    if (items && items.length > 0) {
+      try {
+        allFiles = await gatherFilesFromItems(items);
+      } catch {
+        allFiles = Array.from(e.dataTransfer?.files || []);
+      }
+    } else {
+      allFiles = Array.from(e.dataTransfer?.files || []);
+    }
+    const images = allFiles.filter(f => f.type.startsWith('image/') || /\.(png|jpe?g|webp|gif)$/i.test(f.name));
+    setBulkFolderFiles(images);
+    const csvCandidates = allFiles.filter(f => /\.csv$/i.test(f.name));
+    const pickedCsv = csvCandidates[0] || null;
+    if (pickedCsv) setBulkCsv(pickedCsv);
+    const csvToUse = pickedCsv || bulkCsv;
+    if (csvToUse) {
+      try {
+        const rows = await parseCsvToRows(csvToUse);
+        mapRowsToFolder(rows, images);
+      } catch (err) {
+        console.error('CSV parse error:', err);
+        setBulkRowsPreview([]);
+      }
+    }
   };
 
   const formatDate = (dateString: string) => {
@@ -353,7 +537,7 @@ export default function PrintifyPage() {
                       {activeTab === 'products' && (
                       <div className="flex items-center justify-between">
                         <div className="flex items-center gap-4 text-sm text-muted-foreground">
-                          <span>{products.length} of {totalProducts} products</span>
+                          <span>{products.length}{hasMore ? '+' : ''} products</span>
                           {hasActiveFilters && (
                             <Badge variant="secondary" className="text-xs">
                               Filtered
@@ -361,7 +545,7 @@ export default function PrintifyPage() {
                           )}
                         </div>
                         <div className="flex items-center gap-2">
-                          <ProductCreator
+                         <ProductCreator
                             storeId={selectedStore.id.toString()}
                             onSuccess={handleProductCreated}
                             trigger={
@@ -380,6 +564,26 @@ export default function PrintifyPage() {
                             <Filter className="h-4 w-4 mr-2" />
                             Filters
                           </Button>
+                          <div className="flex items-center gap-1 ml-2">
+                            <Button
+                              variant={viewMode === 'list' ? 'secondary' : 'ghost'}
+                              size="icon"
+                              className="h-8 w-8"
+                              onClick={() => setViewMode('list')}
+                              title="List view"
+                            >
+                              <List className="h-4 w-4" />
+                            </Button>
+                            <Button
+                              variant={viewMode === 'grid' ? 'secondary' : 'ghost'}
+                              size="icon"
+                              className="h-8 w-8"
+                              onClick={() => setViewMode('grid')}
+                              title="Grid view"
+                            >
+                              <LayoutGrid className="h-4 w-4" />
+                            </Button>
+                          </div>
                           <Button
                             variant="outline"
                             size="sm"
@@ -422,7 +626,22 @@ export default function PrintifyPage() {
                                   type="file"
                                   accept=".csv"
                                   className="hidden"
-                                  onChange={(e) => setBulkCsv(e.target.files?.[0] || null)}
+                                  onChange={async (e) => {
+                                    const file = e.target.files?.[0] || null;
+                                    setBulkCsv(file);
+                                    if (file) {
+                                      try {
+                                        const rows = await parseCsvToRows(file);
+                                        if (bulkFolderFiles.length > 0) mapRowsToFolder(rows, bulkFolderFiles);
+                                        else setBulkRowsPreview(rows.map(r => ({ ...r, matched: false, selected: false })));
+                                      } catch (err) {
+                                        console.error('CSV parse error:', err);
+                                        setBulkRowsPreview([]);
+                                      }
+                                    } else {
+                                      setBulkRowsPreview([]);
+                                    }
+                                  }}
                                   id="bulk-csv-input"
                                 />
                                 <Button asChild variant="outline">
@@ -432,49 +651,189 @@ export default function PrintifyPage() {
                                 </Button>
                                 <span className="text-sm text-muted-foreground">{bulkCsv?.name || 'No file selected'}</span>
                               </div>
-                              <p className="text-xs text-muted-foreground">CSV headers required: Title, Image Name. Images must exist in /Images.</p>
+                              <p className="text-xs text-muted-foreground">CSV headers required: Title, Image Name.</p>
                             </div>
                           </div>
-                          <div className="flex items-center gap-2">
+                          <div className="space-y-2 md:col-span-2">
+                            <Label>Images Folder</Label>
+                            <div className="flex items-center gap-2">
+                              <input
+                                type="file"
+                                multiple
+                                {...({ webkitdirectory: '' } as unknown as Record<string, unknown>)}
+                                className="hidden"
+                                onChange={(e) => handleFolderInput(e.target.files)}
+                                id="bulk-folder-input"
+                              />
+                              <Button asChild variant="outline">
+                                <label htmlFor="bulk-folder-input" className="cursor-pointer">
+                                  <Upload className="h-4 w-4 mr-2" /> Choose Folder
+                                </label>
+                              </Button>
+                              <span className="text-sm text-muted-foreground">
+                                {bulkFolderFiles.length > 0 ? `${bulkFolderFiles.length} image(s) selected` : 'No folder selected'}
+                              </span>
+                            </div>
+                            <div
+                              ref={dropRef}
+                              onDragOver={(e) => { e.preventDefault(); e.stopPropagation(); }}
+                              onDrop={handleDropOnZone}
+                              className="mt-2 border border-dashed rounded-md p-4 text-sm text-muted-foreground hover:bg-muted/30"
+                            >
+                              Drag and drop a folder containing your CSV and images to auto-detect and preview. You can also choose a folder above.
+                            </div>
+                          </div>
+
+                          {bulkRowsPreview.length > 0 && (
+                            <div className="space-y-2 md:col-span-2">
+                              <div className="flex items-center justify-between">
+                                <div className="text-sm text-muted-foreground">
+                                  Previewing {bulkRowsPreview.length} row(s). Matched {bulkRowsPreview.filter(r => r.matched).length}, Missing {bulkRowsPreview.filter(r => !r.matched).length}. Selected {bulkRowsPreview.filter(r => r.selected).length}.
+                                </div>
+                                <div className="flex items-center gap-2">
+                                  <Button
+                                    size="sm"
+                                    variant="outline"
+                                    onClick={() => setBulkRowsPreview(prev => prev.map(r => ({ ...r, selected: r.matched })))}
+                                  >Select All</Button>
+                                  <Button
+                                    size="sm"
+                                    variant="outline"
+                                    onClick={() => setBulkRowsPreview(prev => prev.map(r => ({ ...r, selected: false })))}
+                                  >Clear</Button>
+                                  <Button
+                                    size="sm"
+                                    variant="destructive"
+                                    onClick={() => setBulkRowsPreview(prev => {
+                                      prev.forEach(p => { if (p.selected && p.previewUrl) URL.revokeObjectURL(p.previewUrl); });
+                                      return prev.filter(p => !p.selected);
+                                    })}
+                                  >Remove Selected</Button>
+                                </div>
+                              </div>
+                              <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-3">
+                                {bulkRowsPreview.map((r, idx) => (
+                                  <div key={`${r.title}-${idx}`} className="border rounded-md p-3 flex items-center gap-3">
+                                    <Checkbox
+                                      checked={r.selected}
+                                      onCheckedChange={(checked) => setBulkRowsPreview(prev => prev.map((p, i) => i === idx ? { ...p, selected: checked === true } : p))}
+                                      disabled={!r.matched}
+                                    />
+                                    <div className="w-16 h-16 bg-muted rounded overflow-hidden flex items-center justify-center">
+                                      {r.previewUrl ? (
+                                        // eslint-disable-next-line @next/next/no-img-element
+                                        <img src={r.previewUrl} alt={r.imageName} className="object-contain w-full h-full" />
+                                      ) : (
+                                        <span className="text-[10px] text-muted-foreground text-center px-1">No image</span>
+                                      )}
+                                    </div>
+                                    <div className="min-w-0 flex-1">
+                                      <div className="text-sm font-medium truncate" title={r.title}>{r.title}</div>
+                                      <div className="text-xs text-muted-foreground truncate" title={r.imageName}>{r.imageName}</div>
+                                      <div className={`text-xs ${r.matched ? 'text-green-600' : 'text-red-600'}`}>{r.matched ? 'Matched' : 'Missing'}</div>
+                                    </div>
+                                    <Button
+                                      type="button"
+                                      size="icon"
+                                      variant="ghost"
+                                      onClick={() => setBulkRowsPreview(prev => {
+                                        const next = [...prev];
+                                        const removed = next.splice(idx, 1)[0];
+                                        if (removed?.previewUrl) URL.revokeObjectURL(removed.previewUrl);
+                                        return next;
+                                      })}
+                                      title="Remove"
+                                    >
+                                      <Trash2 className="h-4 w-4" />
+                                    </Button>
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+
+                          <div className="flex items-center gap-2 md:col-span-2">
                             <Button
                               onClick={async () => {
                                 if (!selectedStore || !bulkCsv || !bulkTemplateId) return;
                                 try {
-                                  setBulkStatus({ running: true, created: 0, failed: 0, total: 0 });
-                                  const text = await bulkCsv.text();
-                                  const lines = text.split(/\r?\n/).filter(l => l.trim().length > 0);
-                                  if (lines.length < 2) throw new Error('CSV must include header and at least one row');
-                                  const headers = lines[0].split(',').map(h => h.trim().toLowerCase());
-                                  const titleIdx = headers.findIndex(h => h === 'title' || h === 'tile');
-                                  const imageIdx = headers.findIndex(h => h === 'image name' || h === 'imagename' || h === 'image');
-                                  if (titleIdx === -1 || imageIdx === -1) throw new Error('CSV needs "Title" and "Image Name" headers');
-                                  const rows = lines.slice(1).map(line => {
-                                    const parts = line.split(',');
-                                    return {
-                                      title: (parts[titleIdx] || '').trim(),
-                                      imageName: (parts[imageIdx] || '').trim(),
-                                    };
-                                  }).filter(r => r.title && r.imageName);
-                                  setBulkStatus({ running: true, created: 0, failed: 0, total: rows.length });
-                                  const res = await fetch('/api/printify/bulk-duplicate', {
-                                    method: 'POST',
-                                    headers: { 'Content-Type': 'application/json' },
-                                    body: JSON.stringify({
-                                      storeId: selectedStore.id.toString(),
-                                      template: { id: bulkTemplateId },
-                                      rows,
-                                    }),
-                                  });
-                                  const data = await res.json();
-                                  if (!res.ok || !data.success) throw new Error(data.details || data.error || 'Bulk duplicate failed');
-                                  setBulkStatus({ running: false, created: data.created || 0, failed: data.failed || 0, total: data.results?.length || rows.length });
-                                  setBulkResults((data.results || []).map((r: { title: string; imageName: string; success?: boolean; error?: string }) => ({
-                                    title: r.title,
-                                    imageName: r.imageName,
-                                    success: !!r.success,
-                                    error: r.error,
-                                  })));
-                                  fetchProducts(selectedStore.id.toString(), { offset: 0, append: false });
+                                  // If folder provided, run client-side duplicates with data URLs; otherwise fallback to server bulk
+                                  if (bulkFolderFiles.length > 0 && bulkRowsPreview.length > 0) {
+                                    const selectedPreviews = bulkRowsPreview.filter(p => p.selected && p.file);
+                                    if (selectedPreviews.length === 0) {
+                                      setBulkStatus({ running: false, created: 0, failed: 0, total: 0, message: 'No selected rows to process' });
+                                      return;
+                                    }
+                                    setBulkStatus({ running: true, created: 0, failed: 0, total: selectedPreviews.length });
+                                    setBulkResults([]);
+                                    const results: Array<{ title: string; imageName: string; success: boolean; error?: string }> = [];
+                                    for (const row of selectedPreviews) {
+                                      try {
+                                        const file = row.file as File | undefined;
+                                        if (!file) {
+                                          results.push({ title: row.title, imageName: row.imageName, success: false, error: 'Image not found in folder' });
+                                          setBulkResults([...results]);
+                                          continue;
+                                        }
+                                        const dataUrl: string = await new Promise((resolve, reject) => {
+                                          const reader = new FileReader();
+                                          reader.onload = () => resolve(String(reader.result));
+                                          reader.onerror = () => reject(new Error('Failed to read image'));
+                                          reader.readAsDataURL(file);
+                                        });
+                                        const payload = {
+                                          storeId: selectedStore.id.toString(),
+                                          productId: bulkTemplateId,
+                                          overrides: {
+                                            title: row.title,
+                                            images: [{ src: dataUrl, position: 'front' }],
+                                          },
+                                        };
+                                        const dupRes = await fetch('/api/printify/products/duplicate', {
+                                          method: 'POST',
+                                          headers: { 'Content-Type': 'application/json' },
+                                          body: JSON.stringify(payload),
+                                        });
+                                        const dupJson = await dupRes.json().catch(() => ({}));
+                                        if (!dupRes.ok || !dupJson?.success) {
+                                          results.push({ title: row.title, imageName: row.imageName, success: false, error: dupJson?.details || dupJson?.error || `${dupRes.status} ${dupRes.statusText}` });
+                                        } else {
+                                          results.push({ title: row.title, imageName: row.imageName, success: true });
+                                        }
+                                        setBulkResults([...results]);
+                                      } catch (e) {
+                                        results.push({ title: row.title, imageName: row.imageName, success: false, error: e instanceof Error ? e.message : 'Unknown error' });
+                                        setBulkResults([...results]);
+                                      }
+                                    }
+                                    const created = results.filter(r => r.success).length;
+                                    const failed = results.length - created;
+                                    setBulkStatus({ running: false, created, failed, total: results.length });
+                                    fetchProducts(selectedStore.id.toString(), { offset: 0, append: false });
+                                  } else {
+                                    setBulkStatus({ running: true, created: 0, failed: 0, total: 0 });
+                                    const rows = await parseCsvToRows(bulkCsv);
+                                    setBulkStatus({ running: true, created: 0, failed: 0, total: rows.length });
+                                    const res = await fetch('/api/printify/bulk-duplicate', {
+                                      method: 'POST',
+                                      headers: { 'Content-Type': 'application/json' },
+                                      body: JSON.stringify({
+                                        storeId: selectedStore.id.toString(),
+                                        template: { id: bulkTemplateId },
+                                        rows,
+                                      }),
+                                    });
+                                    const data = await res.json();
+                                    if (!res.ok || !data.success) throw new Error(data.details || data.error || 'Bulk duplicate failed');
+                                    setBulkStatus({ running: false, created: data.created || 0, failed: data.failed || 0, total: data.results?.length || rows.length });
+                                    setBulkResults((data.results || []).map((r: { title: string; imageName: string; success?: boolean; error?: string }) => ({
+                                      title: r.title,
+                                      imageName: r.imageName,
+                                      success: !!r.success,
+                                      error: r.error,
+                                    })));
+                                    fetchProducts(selectedStore.id.toString(), { offset: 0, append: false });
+                                  }
                                 } catch (err) {
                                   console.error(err);
                                   setBulkStatus({ running: false, created: 0, failed: 0, total: 0, message: err instanceof Error ? err.message : 'Bulk failed' });
@@ -525,7 +884,7 @@ export default function PrintifyPage() {
                               </div>
                             )}
                             {(!bulkStatus?.running && bulkResults.length === 0) && (
-                              <p className="text-sm text-muted-foreground">Upload a CSV and start bulk to see results here.</p>
+                              <p className="text-sm text-muted-foreground">Upload a CSV and select a folder to preview, then start bulk.</p>
                             )}
                           </div>
                         </div>
@@ -601,18 +960,216 @@ export default function PrintifyPage() {
                           </div>
                         ) : (
                           <>
-                            <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-                              {products.map((product) => (
-                                <Card key={product.id}>
-                                  <CardHeader className="pb-2">
-                                    <CardTitle className="text-base line-clamp-1">{product.title}</CardTitle>
-                                  </CardHeader>
-                                  <CardContent>
-                                    {/* Price (min across variants) */}
-                                    {product.variants && product.variants.length > 0 && (
-                                      <div className="flex items-center justify-between text-sm">
-                                        <span className="text-muted-foreground">Price:</span>
-                                        <span className="font-medium">
+                            {viewMode === 'list' && (
+                              <div className="border rounded-md divide-y">
+                                {products.map((product) => {
+                                  const cover = (product.images && product.images.length > 0)
+                                    ? (product.images.find((img) => img.is_default) || product.images[0])
+                                    : undefined;
+                                  const coverSrc = cover?.src;
+                                  const hasVariants = product.variants && product.variants.length > 0;
+                                  const minPrice = hasVariants ? Math.min(...product.variants.map(v => v.price)) : null;
+                                  const varied = hasVariants ? product.variants.some(v => v.price !== product.variants![0].price) : false;
+
+                                  return (
+                                    <div key={product.id} className="flex items-center gap-4 p-3">
+                                      <Dialog>
+                                        <DialogTrigger asChild>
+                                          <div className="relative h-24 w-24 bg-muted overflow-hidden rounded cursor-zoom-in group">
+                                            {coverSrc ? (
+                                              <Image src={coverSrc} alt={product.title} fill sizes="96px" className="object-cover" />
+                                            ) : (
+                                              <div className="flex items-center justify-center h-24 w-24 text-xs text-muted-foreground">No image</div>
+                                            )}
+                                            <div className="absolute inset-0 flex items-center justify-center bg-black/40 text-white text-xs sm:text-sm opacity-0 transition-opacity group-hover:opacity-100">
+                                              Click to preview
+                                            </div>
+                                          </div>
+                                        </DialogTrigger>
+                                        <DialogContent className="sm:max-w-4xl p-4">
+                                          <DialogHeader>
+                                            <DialogTitle className="truncate">{product.title}</DialogTitle>
+                                          </DialogHeader>
+                                          <div className="relative w-full h-[70vh]">
+                                            {coverSrc ? (
+                                              <Image src={coverSrc} alt={product.title} fill sizes="100vw" className="object-contain object-center" />
+                                            ) : (
+                                              <div className="flex items-center justify-center h-full text-sm text-muted-foreground">No image</div>
+                                            )}
+                                          </div>
+                                          {/* All color previews (front) */}
+                                          {(() => {
+                                            const previews = getFrontPreviews(product);
+                                            if (previews.length === 0) return null;
+                                            return (
+                                              <div className="mt-4">
+                                                <div className="text-sm text-muted-foreground mb-2">All colors (front)</div>
+                                                <div className="grid gap-3 grid-cols-2 sm:grid-cols-3 md:grid-cols-4">
+                                                  {previews.map((pv, idx) => (
+                                                    <div key={`${pv.color}-${idx}`} className="">
+                                                      <div className="relative w-full aspect-[4/5] rounded overflow-hidden">
+                                                        {pv.src ? (
+                                                          <Image src={pv.src} alt={`${product.title} - ${pv.color}`} fill sizes="(max-width: 768px) 50vw, 25vw" className="object-contain bg-muted" />
+                                                        ) : (
+                                                          <div className="flex items-center justify-center w-full h-full text-xs bg-muted" style={{ backgroundColor: pv.swatch || undefined }}>
+                                                            No preview
+                                                          </div>
+                                                        )}
+                                                      </div>
+                                                      <div className="mt-1 text-xs text-center truncate">{pv.color}</div>
+                                                    </div>
+                                                  ))}
+                                                </div>
+                                              </div>
+                                            );
+                                          })()}
+                                        </DialogContent>
+                                      </Dialog>
+                                      <div className="flex-1 min-w-0">
+                                        <TitleBlock
+                                          product={product}
+                                          storeId={selectedStore!.id.toString()}
+                                          onSaved={(t) => applyUpdatedTitle(product.id, t)}
+                                        />
+                                        <div className="text-xs text-muted-foreground mt-0.5">
+                                          {hasVariants ? (
+                                            <>
+                                              From ${formatCentsUSD(minPrice!)}{varied && '+'}
+                                            </>
+                                          ) : (
+                                            '—'
+                                          )}
+                                        </div>
+                                        <div className="mt-1">
+                                          <TagsBlock
+                                            product={product}
+                                            storeId={selectedStore!.id.toString()}
+                                            onSaved={(tags) => applyUpdatedTags(product.id, tags)}
+                                          />
+                                        </div>
+                                      </div>
+                                      <div className="flex items-center gap-2">
+                                        <ProductCreator
+                                          storeId={selectedStore!.id.toString()}
+                                          templateProduct={product}
+                                          onSuccess={handleProductCreated}
+                                          trigger={
+                                            <Button variant="outline" size="sm">
+                                              <Copy className="h-3 w-3 mr-1" />
+                                              Duplicate
+                                            </Button>
+                                          }
+                                        />
+                                        <Button
+                                          variant="destructive"
+                                          size="sm"
+                                          onClick={async () => {
+                                            if (!selectedStore) return;
+                                            const confirmed = window.confirm(`Delete \"${product.title}\"? This cannot be undone.`);
+                                            if (!confirmed) return;
+                                            try {
+                                              const res = await fetch(`/api/printify/products/${product.id}?storeId=${selectedStore.id}`, { method: 'DELETE' });
+                                              const data = await res.json();
+                                              if (!data.success) throw new Error(data.details || data.error || 'Failed to delete');
+                                              await fetchProducts(selectedStore.id.toString());
+                                            } catch (err) {
+                                              console.error('Failed to delete product', err);
+                                              alert(err instanceof Error ? err.message : 'Failed to delete product');
+                                            }
+                                          }}
+                                        >
+                                          <Trash2 className="h-3 w-3 mr-1" />
+                                          Delete
+                                        </Button>
+                                      </div>
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            )}
+                            {viewMode === 'grid' && (
+                              <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+                              {products.map((product) => {
+                                const cover = (product.images && product.images.length > 0)
+                                  ? (product.images.find((img) => img.is_default) || product.images[0])
+                                  : undefined;
+                                const coverSrc = cover?.src;
+
+                                return (
+                                  <Card key={product.id}>
+                                    {/* Product cover image */}
+                                      <Dialog>
+                                        <DialogTrigger asChild>
+                                          <div className="relative w-full aspect-[4/3] bg-muted overflow-hidden cursor-zoom-in group">
+                                            {coverSrc ? (
+                                              <Image
+                                                src={coverSrc}
+                                                alt={product.title}
+                                                fill
+                                                sizes="(max-width: 768px) 100vw, (max-width: 1024px) 50vw, 33vw"
+                                                className="object-cover"
+                                              />
+                                            ) : (
+                                              <div className="flex items-center justify-center h-full text-sm text-muted-foreground">
+                                                No image
+                                              </div>
+                                            )}
+                                            <div className="absolute inset-0 flex items-center justify-center bg-black/40 text-white text-sm opacity-0 transition-opacity group-hover:opacity-100">
+                                              Click to preview
+                                            </div>
+                                          </div>
+                                        </DialogTrigger>
+                                        <DialogContent className="sm:max-w-4xl p-4">
+                                          <DialogHeader>
+                                            <DialogTitle className="truncate">{product.title}</DialogTitle>
+                                          </DialogHeader>
+                                          <div className="relative w-full h-[70vh]">
+                                            {coverSrc ? (
+                                              <Image src={coverSrc} alt={product.title} fill sizes="100vw" className="object-contain object-center" />
+                                            ) : (
+                                              <div className="flex items-center justify-center h-full text-sm text-muted-foreground">No image</div>
+                                            )}
+                                          </div>
+                                          {/* All color previews (front) */}
+                                          {(() => {
+                                            const previews = getFrontPreviews(product);
+                                            if (previews.length === 0) return null;
+                                            return (
+                                              <div className="mt-4">
+                                                <div className="text-sm text-muted-foreground mb-2">All colors (front)</div>
+                                                <div className="grid gap-3 grid-cols-2 sm:grid-cols-3 md:grid-cols-4">
+                                                  {previews.map((pv, idx) => (
+                                                    <div key={`${pv.color}-${idx}`} className="">
+                                                      <div className="relative w-full aspect-[4/5] rounded bg-muted overflow-hidden">
+                                                        {pv.src ? (
+                                                          <Image src={pv.src} alt={`${product.title} - ${pv.color}`} fill sizes="(max-width: 768px) 50vw, 25vw" className="object-contain" />
+                                                        ) : (
+                                                          <div className="flex items-center justify-center h-full text-xs text-muted-foreground">No image</div>
+                                                        )}
+                                                      </div>
+                                                      <div className="mt-1 text-xs text-center truncate">{pv.color}</div>
+                                                    </div>
+                                                  ))}
+                                                </div>
+                                              </div>
+                                            );
+                                          })()}
+                                        </DialogContent>
+                                      </Dialog>
+                                      <CardHeader className="pb-2">
+                                        <TitleBlock
+                                          product={product}
+                                          storeId={selectedStore!.id.toString()}
+                                          onSaved={(t) => applyUpdatedTitle(product.id, t)}
+                                          compact
+                                        />
+                                      </CardHeader>
+                                    <CardContent>
+                                      {/* Price (min across variants) */}
+                                      {product.variants && product.variants.length > 0 && (
+                                        <div className="flex items-center justify-between text-sm">
+                                          <span className="text-muted-foreground">Price:</span>
+                                          <span className="font-medium">
                                           ${formatCentsUSD(Math.min(...product.variants.map(v => v.price)))}
                                           {product.variants.some(v => v.price !== product.variants[0].price) && '+'}
                                         </span>
@@ -620,19 +1177,12 @@ export default function PrintifyPage() {
                                     )}
 
                                     {/* Tags */}
-                                    {product.tags && product.tags.length > 0 && (
-                                      <div className="flex flex-wrap gap-1 mt-2">
-                                        {product.tags.slice(0, 3).map((tag, index) => (
-                                          <Badge key={index} variant="outline" className="text-xs">
-                                            {tag}
-                                          </Badge>
-                                        ))}
-                                        {product.tags.length > 3 && (
-                                          <Badge variant="outline" className="text-xs">
-                                            +{product.tags.length - 3}
-                                          </Badge>
-                                        )}
-                                      </div>
+                                    {product.tags && (
+                                      <TagsBlock
+                                        product={product}
+                                        storeId={selectedStore!.id.toString()}
+                                        onSaved={(tags) => applyUpdatedTags(product.id, tags)}
+                                      />
                                     )}
 
                                     {/* Action Buttons */}
@@ -673,11 +1223,13 @@ export default function PrintifyPage() {
                                     </div>
                                   </CardContent>
                                 </Card>
-                              ))}
-                            </div>
+                              );
+                              })}
+                              </div>
+                            )}
 
                             {/* Load More */}
-                            {products.length < totalProducts && (
+                            {hasMore && (
                               <div className="flex justify-center mt-6">
                                 <Button
                                   variant="outline"
@@ -715,5 +1267,196 @@ export default function PrintifyPage() {
       </Card>
     </main>
   );
+}
+
+// Local component to manage viewing/editing tags per product
+function TagsBlock({ product, storeId, onSaved }: { product: PrintifyProduct; storeId: string; onSaved: (tags: string[]) => void }) {
+  const [editing, setEditing] = useState(false);
+  const [tags, setTags] = useState<string[]>(product.tags || []);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const reset = () => {
+    setTags(product.tags || []);
+    setError(null);
+    setEditing(false);
+  };
+
+  const save = async () => {
+    try {
+      setSaving(true);
+      setError(null);
+      const res = await fetch(`/api/printify/products/${product.id}?storeId=${storeId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ tags }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data.success) throw new Error(data.details || data.error || 'Failed to update tags');
+      onSaved(tags);
+      setEditing(false);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to update tags');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  if (!editing) {
+    return (
+      <div className="mt-2">
+        <div className="flex items-center justify-between">
+          <div className="flex flex-wrap gap-1">
+            {(product.tags || []).slice(0, 3).map((t, idx) => (
+              <Badge key={`${t}-${idx}`} variant="outline" className="text-xs">{t}</Badge>
+            ))}
+            {(product.tags || []).length > 3 && (
+              <Badge variant="outline" className="text-xs">+{(product.tags || []).length - 3}</Badge>
+            )}
+          </div>
+          <Button variant="ghost" size="sm" className="h-7 px-2" onClick={() => setEditing(true)}>
+            <Tag className="h-3.5 w-3.5 mr-1" /> Edit tags
+          </Button>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="mt-2 space-y-2">
+      <TagInput value={tags} onChange={setTags} placeholder="Type a tag, press comma or Enter" />
+      {error && <div className="text-xs text-red-600">{error}</div>}
+      <div className="flex items-center gap-2">
+        <Button size="sm" onClick={save} disabled={saving}>
+          {saving ? (<><Loader2 className="h-4 w-4 mr-2 animate-spin" />Saving</>) : (<><Check className="h-4 w-4 mr-2" />Save</>)}
+        </Button>
+        <Button size="sm" variant="ghost" onClick={reset} disabled={saving}>
+          <X className="h-4 w-4 mr-2" /> Cancel
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+// Local component to manage editing product title
+function TitleBlock({ product, storeId, onSaved, compact }: { product: PrintifyProduct; storeId: string; onSaved: (title: string) => void; compact?: boolean }) {
+  const [editing, setEditing] = useState(false);
+  const [title, setTitle] = useState<string>(product.title || '');
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const reset = () => {
+    setTitle(product.title || '');
+    setError(null);
+    setEditing(false);
+  };
+
+  const save = async () => {
+    if (!title.trim() || title.trim() === product.title) {
+      setEditing(false);
+      setError(null);
+      return;
+    }
+    try {
+      setSaving(true);
+      setError(null);
+      const res = await fetch(`/api/printify/products/${product.id}?storeId=${storeId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ title: title.trim() }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data.success) throw new Error(data.details || data.error || 'Failed to update title');
+      onSaved(title.trim());
+      setEditing(false);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to update title');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  if (!editing) {
+    return (
+      <div className="flex items-center justify-between gap-2">
+        <div className={compact ? 'text-base font-medium line-clamp-1' : 'font-medium truncate'} title={product.title}>{product.title}</div>
+        <Button variant="ghost" size="sm" className={compact ? 'h-7 px-2' : 'h-8 px-2'} onClick={() => setEditing(true)}>
+          <Pencil className="h-3.5 w-3.5" />
+        </Button>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-1">
+      <Input
+        value={title}
+        onChange={(e) => setTitle(e.target.value)}
+        placeholder="Product title"
+        className={compact ? 'h-8' : ''}
+      />
+      {error && <div className="text-xs text-red-600">{error}</div>}
+      <div className="flex items-center gap-2">
+        <Button size="sm" onClick={save} disabled={saving || !title.trim()}>
+          {saving ? (<><Loader2 className="h-4 w-4 mr-2 animate-spin" />Saving</>) : (<>Save</>)}
+        </Button>
+        <Button size="sm" variant="ghost" onClick={reset} disabled={saving}>
+          <X className="h-4 w-4 mr-2" /> Cancel
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+// Helper: derive front preview images per color variant
+function getFrontPreviews(product: PrintifyProduct): Array<{ color: string; src?: string; swatch?: string }> {
+  try {
+    const variants = Array.isArray(product.variants) ? product.variants : [];
+    const images = Array.isArray(product.images) ? product.images : [];
+    // Group variant ids by color
+    const byColor = new Map<string, { ids: string[]; swatch?: string }>();
+    for (const v of variants) {
+      const color = (v.color || 'Unknown').trim();
+      const id = String(v.id);
+      const entry = byColor.get(color) || { ids: [], swatch: (v.color_code || v.color_code2 || '').toString() };
+      entry.ids.push(id);
+      if (!entry.swatch && (v.color_code || v.color_code2)) entry.swatch = (v.color_code || v.color_code2) as string;
+      byColor.set(color, entry);
+    }
+
+    const result: Array<{ color: string; src?: string; swatch?: string }> = [];
+
+    // Helper to pick best matching image for a set of variant ids
+    const pickFor = (ids: string[]): string | undefined => {
+      const withMatch = images
+        .filter(img => Array.isArray(img.variant_ids) && img.variant_ids.some((id) => ids.includes(String(id))));
+      if (withMatch.length > 0) {
+        // Prefer position front, then is_default
+        withMatch.sort((a, b) => {
+          const af = String(a.position || '').toLowerCase() === 'front' ? 0 : 1;
+          const bf = String(b.position || '').toLowerCase() === 'front' ? 0 : 1;
+          if (af !== bf) return af - bf;
+          const ad = a.is_default ? 0 : 1;
+          const bd = b.is_default ? 0 : 1;
+          return ad - bd;
+        });
+        return withMatch[0]!.src;
+      }
+      // Fallback to any variant.image
+      const v = variants.find(v => ids.includes(String(v.id)) && typeof v.image === 'string' && v.image);
+      return v?.image;
+    };
+
+    for (const [color, { ids, swatch }] of byColor.entries()) {
+      const src = pickFor(ids);
+      result.push({ color, src, swatch });
+    }
+
+    // Sort by color name for stable output
+    result.sort((a, b) => a.color.localeCompare(b.color));
+    return result;
+  } catch {
+    return [];
+  }
 }
 

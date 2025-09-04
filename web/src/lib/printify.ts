@@ -101,19 +101,19 @@ export class PrintifyAPI {
   async getStoreProducts(storeId: string): Promise<PrintifyProduct[]> {
     try {
       const all: PrintifyProduct[] = [];
-      let offset = 0;
       // Printify API enforces limit <= 50
       const limit = 50;
+      let pageNum = 1;
       while (true) {
-        const response: unknown = await this.makeRequest(`/shops/${storeId}/products.json?limit=${limit}&offset=${offset}`);
-        let page: PrintifyProduct[] = [];
+        const response: unknown = await this.makeRequest(`/shops/${storeId}/products.json?limit=${limit}&page=${pageNum}`);
+        let items: PrintifyProduct[] = [];
         let totalFromMeta: number | undefined = undefined;
 
         if (Array.isArray(response)) {
-          page = response as PrintifyProduct[];
+          items = response as PrintifyProduct[];
         } else if (typeof response === 'object' && response !== null) {
           const obj = response as { data?: unknown; meta?: { total?: number } };
-          if (Array.isArray(obj.data)) page = obj.data as PrintifyProduct[];
+          if (Array.isArray(obj.data)) items = obj.data as PrintifyProduct[];
           if (obj.meta && typeof obj.meta.total === 'number') totalFromMeta = obj.meta.total;
         } else {
           console.error('Printify products API response format unexpected (page):', response);
@@ -121,17 +121,17 @@ export class PrintifyAPI {
         }
 
         // Validate page
-        for (const product of page) {
+        for (const product of items) {
           if (!product.id || !product.title) {
             console.error('Invalid product object:', product);
             throw new Error('Printify API returned invalid product data');
           }
         }
 
-        all.push(...page);
-        if (page.length < limit) break;
+        all.push(...items);
+        if (items.length < limit) break;
         if (typeof totalFromMeta === 'number' && all.length >= totalFromMeta) break;
-        offset += limit;
+        pageNum += 1;
       }
 
       return all;
@@ -179,8 +179,10 @@ export class PrintifyAPI {
     try {
       // Enforce Printify limit <= 50; user requested 20
       const capped = Math.max(1, Math.min(50, Math.floor(limit)));
+      const safeOffset = Math.max(0, Math.floor(offset));
+      const page = Math.floor(safeOffset / capped) + 1;
       const response: unknown = await this.makeRequest(
-        `/shops/${storeId}/products.json?limit=${capped}&offset=${Math.max(0, Math.floor(offset))}`
+        `/shops/${storeId}/products.json?limit=${capped}&page=${page}`
       );
 
       let products: PrintifyProduct[] = [];

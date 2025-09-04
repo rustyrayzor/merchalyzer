@@ -59,51 +59,7 @@ async function initIndexedDB(): Promise<IDBDatabase> {
 	});
 }
 
-// Compress data using native compression if available
-async function compressData(data: string): Promise<string> {
-	try {
-		// Check if CompressionStream is available (modern browsers)
-		if (typeof CompressionStream !== 'undefined') {
-			const stream = new CompressionStream('gzip');
-			const writer = stream.writable.getWriter();
-			const reader = stream.readable.getReader();
-
-			// Convert string to Uint8Array
-			const encoder = new TextEncoder();
-			const dataArray = encoder.encode(data);
-
-			// Compress
-			writer.write(dataArray);
-			writer.close();
-
-			const chunks: Uint8Array[] = [];
-			let done = false;
-			while (!done) {
-				const { value, done: readerDone } = await reader.read();
-				done = readerDone;
-				if (value) chunks.push(value);
-			}
-
-			// Combine chunks and convert to base64
-			const compressed = new Uint8Array(chunks.reduce((acc, chunk) => acc + chunk.length, 0));
-			let offset = 0;
-			for (const chunk of chunks) {
-				compressed.set(chunk, offset);
-				offset += chunk.length;
-			}
-
-			// Return as base64 string
-			let binary = '';
-			compressed.forEach(byte => binary += String.fromCharCode(byte));
-			return btoa(binary);
-		}
-	} catch (error) {
-		console.warn('Compression failed, using uncompressed data:', error);
-	}
-
-	// Fallback to uncompressed data
-	return data;
-}
+// NOTE: compression for workflow storage is not currently used.
 
 // Decompress data
 async function decompressData(compressedData: string): Promise<string> {
@@ -330,10 +286,36 @@ export function saveDefaultKeywords(value: string): string {
 }
 
 export function clearDefaultKeywords(): void {
-	window.localStorage.removeItem(DEFAULT_KEYWORDS_KEY);
+    window.localStorage.removeItem(DEFAULT_KEYWORDS_KEY);
 }
 
 // Workflow storage functions
+export type BgRemovalProvider = 'pixelcut' | 'rembg';
+const BG_REMOVAL_PROVIDER_KEY = 'merchalyzer.workflow.bgremoval.provider.v1';
+
+export function loadBgRemovalProvider(): BgRemovalProvider {
+    if (typeof window === 'undefined') return 'pixelcut';
+    try {
+        const raw = window.localStorage.getItem(BG_REMOVAL_PROVIDER_KEY);
+        return raw === 'rembg' || raw === 'pixelcut' ? (raw as BgRemovalProvider) : 'pixelcut';
+    } catch {
+        return 'pixelcut';
+    }
+}
+
+export function saveBgRemovalProvider(value: BgRemovalProvider): BgRemovalProvider {
+    if (typeof window !== 'undefined') {
+        window.localStorage.setItem(BG_REMOVAL_PROVIDER_KEY, value);
+    }
+    return value;
+}
+
+export function clearBgRemovalProvider(): void {
+    if (typeof window !== 'undefined') {
+        window.localStorage.removeItem(BG_REMOVAL_PROVIDER_KEY);
+    }
+}
+
 const WORKFLOW_KEY = 'merchalyzer.workflow.v1';
 const WORKFLOW_METADATA_KEY = 'merchalyzer.workflow.metadata.v1';
 
