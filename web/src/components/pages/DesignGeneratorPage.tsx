@@ -90,6 +90,7 @@ const STYLE_OPTIONS: string[] = [
   'Cyberpunk',
   'Halftone',
   'Psychedelic',
+  'Retro Vintage Sunset',
 ];
 
 // Optional: Expand certain custom styles into richer prompt text for consistency
@@ -101,6 +102,13 @@ const STYLE_PROMPT_MAP: Record<string, string> = {
     'Retro 1980s technology theme (cassette tapes, floppy disk, Game Boy, boombox).',
     'Playful rounded typography, star/sparkle accents; fun, retro vibe.',
     'Concise label: Kawaii retro vector illustration with a flat, cartoon pop‑art style, themed around 1980s nostalgia.'
+  ].join(' '),
+  'Retro Vintage Sunset': [
+    'Retro/vintage sunset motif built as a circle or top arc with horizontal stripes in a warm gradient (red, orange, yellow, teal).',
+    'Central bold black silhouette subject (person, animal, or object) centered against the stripes for high contrast and instant readability.',
+    'Optional nature accents to add depth: palm trees, grass, low mountains, or birds in flight placed subtly around or overlapping the sunset arc.',
+    'Typography system: TOP ARC — curved or straight bold uppercase following the arc; BOTTOM — large block text with distressed texture for a worn vintage feel; Secondary tagline — smaller clean sans-serif, optional accent separators.',
+    'Overall mood: nostalgic, bold, and fun; versatile across hobbies, pets, family, or faith themes; keep a crisp vector style suitable for apparel printing.'
   ].join(' '),
 };
 
