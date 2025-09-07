@@ -528,9 +528,20 @@ export default function DesignGeneratorPage() {
 
   function extractQuote(text: string): string | null {
     try {
-      const m = text.match(/\bQuote\s*-\s*([^\.]+)\./i);
-      return m && m[1] ? m[1].trim() : null;
-    } catch { return null; }
+      const t = String(text || '');
+      // Match: Quote -|–|— <text> until first . ! ? or end
+      const m = t.match(/\bQuote\s*[-–—]\s*([\s\S]*?)([.!?]|$)/i);
+      if (m && m[1]) {
+        const q = m[1].trim().replace(/^(["'“”]+)|(["'“”]+)$/g, '');
+        if (q) return q;
+      }
+      // Fallback: first sentence (before . ! ? or newline)
+      const first = t.split(/[.!?\n]/)[0] || '';
+      const cleaned = first.replace(/^(["'“”]+)|(["'“”]+)$/g, '').trim();
+      return cleaned || null;
+    } catch {
+      return null;
+    }
   }
   function extractComposition(text: string): string | null {
     try {
