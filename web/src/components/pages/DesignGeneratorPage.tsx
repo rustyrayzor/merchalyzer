@@ -274,6 +274,7 @@ export default function DesignGeneratorPage() {
   const [promptDraft, setPromptDraft] = useState<Record<string, string>>({});
   const [toneDraft, setToneDraft] = useState<Record<string, string>>({});
   const [styleDraft, setStyleDraft] = useState<Record<string, string>>({});
+  const [descLoading, setDescLoading] = useState<Record<string, boolean>>({});
   // Sanitize helper: avoid colons in outbound prompts
   const noColons = (s: string) => (s || '').replace(/:/g, ' — ');
   const [refreshOpen, setRefreshOpen] = useState(false);
@@ -514,6 +515,59 @@ export default function DesignGeneratorPage() {
     parts.push(psub ? withPrimaryPrefix(prim, psub) : prim);
     if (ssub) parts.push(withPrimaryPrefix(sec || '', ssub)); else if (sec) parts.push(sec);
     setPrompt(parts.join(' × '));
+  }
+
+  function extractQuote(text: string): string | null {
+    try {
+      const m = text.match(/\bQuote\s*-\s*([^\.]+)\./i);
+      return m && m[1] ? m[1].trim() : null;
+    } catch { return null; }
+  }
+  function extractComposition(text: string): string | null {
+    try {
+      const m = text.match(/(The composition is centered against a flat dark grey background[^]*)$/i);
+      return m && m[1] ? m[1].trim() : null;
+    } catch { return null; }
+  }
+
+  async function regenerateDescription(row: DesignIdeaRow) {
+    const quote = extractQuote(row.description || '') || '';
+    if (!quote) {
+      show({ title: 'No quote found', description: 'Cannot locate the Quote - … sentence.', variant: 'error' });
+      return;
+    }
+    setDescLoading(prev => ({ ...prev, [row.id]: true }));
+    try {
+      const parsed = parseToneStyleFromPrompt(row.prompt || '');
+      const res = await fetch('/api/design-ideas/description', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          quote,
+          model: row.model,
+          contextPrompt: row.prompt,
+          tone: row.imgTone || parsed.tone,
+          tshirtStyle: row.imgStyle || parsed.style,
+        }),
+      });
+      if (!res.ok) {
+        const text = await res.text();
+        try { const j = JSON.parse(text) as { error?: string }; show({ title: 'Regeneration failed', description: j.error || text, variant: 'error' }); }
+        catch { show({ title: 'Regeneration failed', description: text, variant: 'error' }); }
+        return;
+      }
+      const data = await res.json() as { description: string };
+      const newDesc = (data.description || '').trim().replace(/^[-•\s]+/, '');
+      const comp = extractComposition(row.description || '');
+      const rebuilt = `Quote - ${quote}. ${newDesc}${comp ? (newDesc.endsWith('.') ? ' ' : ' ') + comp : ''}`;
+      setRows(prev => prev.map(r => r.id === row.id ? { ...r, description: rebuilt } : r));
+      show({ title: 'Description updated', variant: 'success' });
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      show({ title: 'Regeneration error', description: msg, variant: 'error' });
+    } finally {
+      setDescLoading(prev => ({ ...prev, [row.id]: false }));
+    }
   }
 
   function applyPreset(primary: string, sub: string) {
@@ -2114,6 +2168,16 @@ export default function DesignGeneratorPage() {
                     Sent {sendSuccessCount[r.id]} to Workflow
                   </span>
                 ) : null}
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => regenerateDescription(r)}
+                  disabled={!!descLoading[r.id]}
+                  title="Regenerate only the description sentence"
+                >
+                  {descLoading[r.id] ? <Loader2 className="h-4 w-4 mr-1 animate-spin"/> : <RefreshIcon className="h-4 w-4 mr-1"/>}
+                  Regen Desc
+                </Button>
                 <Button variant={copied[r.id] ? 'default' : 'outline'} size="sm" onClick={() => copyRow(r.description, r.id)} title={copied[r.id] ? 'Copied!' : 'Copy to clipboard'}>
                   {copied[r.id] ? (<><CheckCircle2 className="h-4 w-4 mr-1" /> Copied</>) : (<><Copy className="h-4 w-4 mr-1" /> Copy</>)}
                 </Button>
