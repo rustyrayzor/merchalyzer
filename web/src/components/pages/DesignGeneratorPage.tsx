@@ -277,6 +277,7 @@ export default function DesignGeneratorPage() {
   const [userStyles, setUserStyles] = useState<UserStyle[]>([]);
   const [selectedUserStyleIds, setSelectedUserStyleIds] = useState<string[]>([]);
   const [showStylesManager, setShowStylesManager] = useState(false);
+  const [showIdeogramCreditsModal, setShowIdeogramCreditsModal] = useState(false);
   const [promptEditOpen, setPromptEditOpen] = useState<Record<string, boolean>>({});
   const [promptEditMode, setPromptEditMode] = useState<Record<string, 'prompt' | 'toneStyle' | 'both'>>({});
   const [promptDraft, setPromptDraft] = useState<Record<string, string>>({});
@@ -860,8 +861,13 @@ export default function DesignGeneratorPage() {
       });
       if (!res.ok) {
         const text = await res.text();
-        try { const err = JSON.parse(text) as { error?: string }; alert(err.error || text); }
-        catch { alert(text); }
+        const lowered = text.toLowerCase();
+        if (lowered.includes('ideogram error 402') || lowered.includes('insufficient balance') || lowered.includes('auto-recharge is disabled')) {
+          setShowIdeogramCreditsModal(true);
+        } else {
+          try { const err = JSON.parse(text) as { error?: string }; alert(err.error || text); }
+          catch { alert(text); }
+        }
         return;
       }
       const data = await res.json() as { images: string[] };
@@ -902,8 +908,13 @@ export default function DesignGeneratorPage() {
       });
       if (!res.ok) {
         const text = await res.text();
-        try { const err = JSON.parse(text) as { error?: string }; alert(err.error || text); }
-        catch { alert(text); }
+        const lowered = text.toLowerCase();
+        if (lowered.includes('ideogram error 402') || lowered.includes('insufficient balance') || lowered.includes('auto-recharge is disabled')) {
+          setShowIdeogramCreditsModal(true);
+        } else {
+          try { const err = JSON.parse(text) as { error?: string }; alert(err.error || text); }
+          catch { alert(text); }
+        }
         return;
       }
       const data = await res.json() as { images: string[] };
@@ -2227,6 +2238,29 @@ export default function DesignGeneratorPage() {
             <DialogTitle>Manage My Styles</DialogTitle>
           </DialogHeader>
           <MyStylesManager styles={userStyles} onChange={(next) => { setUserStyles(next); saveUserStyles(next); }} />
+        </DialogContent>
+      </Dialog>
+
+      {/* Ideogram credits depleted modal */}
+      <Dialog open={showIdeogramCreditsModal} onOpenChange={setShowIdeogramCreditsModal}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Ideogram Credits Depleted</DialogTitle>
+          </DialogHeader>
+          <div className="text-sm text-gray-700 space-y-2">
+            <p>
+              Your Ideogram balance appears to be depleted or auto-recharge is disabled. Mockup generation via Ideogram cannot continue.
+            </p>
+            <p>
+              Please top up your credits or enable auto-recharge at Ideogram, or use the Ideogram website directly.
+            </p>
+          </div>
+          <div className="flex justify-end gap-2 mt-3">
+            <Button variant="outline" onClick={() => setShowIdeogramCreditsModal(false)}>Close</Button>
+            <Button asChild>
+              <a href="https://ideogram.ai" target="_blank" rel="noreferrer">Open ideogram.ai</a>
+            </Button>
+          </div>
         </DialogContent>
       </Dialog>
       
