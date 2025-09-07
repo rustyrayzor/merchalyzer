@@ -726,19 +726,26 @@ export default function DesignGeneratorPage() {
         }
       }
 
-      const res = await fetch('/api/design-ideas', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          prompt: noColons(pWithMeta),
-          count: count || 1,
-          model,
-          tone: chosenTone,
-          tshirtStyle: chosenStyle,
-          primaryNiche: niche || '',
-          secondaryNiche: secondaryNiche || '',
+      let res: Response;
+      try {
+        res = await fetch('/api/design-ideas', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            prompt: noColons(pWithMeta),
+            count: count || 1,
+            model,
+            tone: chosenTone,
+            tshirtStyle: chosenStyle,
+            primaryNiche: niche || '',
+            secondaryNiche: secondaryNiche || '',
         }),
       });
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        show({ title: 'Failed to fetch', description: 'Could not reach /api/design-ideas. Run the app via npm run dev/start (not file://). ' + msg, variant: 'error' });
+        return;
+      }
       if (!res.ok) {
         const text = await res.text();
         try {
