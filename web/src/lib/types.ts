@@ -119,6 +119,10 @@ export interface WorkflowImage {
 		colorChanged?: boolean;
 		inverted?: boolean;
 	};
+	/** simple in-app history for undo: previous processed URLs */
+	history?: string[];
+	/** parallel stack of operation keys (e.g., 'backgroundRemoved','upscaled') */
+	historySteps?: string[];
 }
 
 // Printify Integration Types

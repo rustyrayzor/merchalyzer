@@ -15,6 +15,8 @@ const DEFAULT_MODEL_KEY = 'merchalyzer.model.default.v1';
 const DEFAULT_EDIT_MODEL_KEY = 'merchalyzer.edit.model.default.v1';
 const DEFAULT_BRAND_KEY = 'merchalyzer.brand.default.v1';
 const DEFAULT_KEYWORDS_KEY = 'merchalyzer.keywords.default.v1';
+const DESIGN_MOCKUPS_SAVED_KEY = 'merchalyzer.designMockups.saved.v1';
+const USER_STYLES_KEY = 'merchalyzer.userstyles.v1';
 
 // IndexedDB Database Instance
 let dbInstance: IDBDatabase | null = null;
@@ -316,6 +318,207 @@ export function clearBgRemovalProvider(): void {
     }
 }
 
+// Upscale provider (Upscayl by default, Ideogram optional)
+export type UpscaleProvider = 'upscayl' | 'ideogram';
+const UPSCALE_PROVIDER_KEY = 'merchalyzer.workflow.upscale.provider.v1';
+
+export function loadUpscaleProvider(): UpscaleProvider {
+    if (typeof window === 'undefined') return 'ideogram';
+    try {
+        const raw = window.localStorage.getItem(UPSCALE_PROVIDER_KEY);
+        return raw === 'ideogram' || raw === 'upscayl' ? (raw as UpscaleProvider) : 'ideogram';
+    } catch {
+        return 'ideogram';
+    }
+}
+
+export function saveUpscaleProvider(value: UpscaleProvider): UpscaleProvider {
+    if (typeof window !== 'undefined') {
+        window.localStorage.setItem(UPSCALE_PROVIDER_KEY, value);
+    }
+    return value;
+}
+
+export function clearUpscaleProvider(): void {
+    if (typeof window !== 'undefined') {
+        window.localStorage.removeItem(UPSCALE_PROVIDER_KEY);
+    }
+}
+
+// Ideogram Upscale settings 
+export interface IdeogramUpscaleSettings {
+    resemblance?: number; // 1..100
+    detail?: number; // 1..100
+    magic_prompt_option?: 'AUTO' | 'ON' | 'OFF';
+    seed?: number | null;
+}
+const IDEO_UPSCALE_KEY = 'merchalyzer.workflow.ideogram.upscale.v1';
+
+export function loadIdeogramUpscaleSettings(): IdeogramUpscaleSettings {
+    if (typeof window === 'undefined') return {};
+    try {
+        const raw = window.localStorage.getItem(IDEO_UPSCALE_KEY);
+        const parsed = raw ? JSON.parse(raw) as IdeogramUpscaleSettings : {};
+        return parsed && typeof parsed === 'object' ? parsed : {};
+    } catch {
+        return {};
+    }
+}
+
+export function saveIdeogramUpscaleSettings(value: IdeogramUpscaleSettings): IdeogramUpscaleSettings {
+    if (typeof window !== 'undefined') {
+        window.localStorage.setItem(IDEO_UPSCALE_KEY, JSON.stringify(value || {}));
+    }
+    return value;
+}
+
+export function clearIdeogramUpscaleSettings(): void {
+    if (typeof window !== 'undefined') {
+        window.localStorage.removeItem(IDEO_UPSCALE_KEY);
+    }
+}
+// Mockup generation provider (Ideogram by default, OpenRouter as fallback)
+export type MockupProvider = 'ideogram' | 'openrouter';
+const MOCKUP_PROVIDER_KEY = 'merchalyzer.mockup.provider.v1';
+
+export function loadMockupProvider(): MockupProvider {
+    if (typeof window === 'undefined') return 'ideogram';
+    try {
+        const raw = window.localStorage.getItem(MOCKUP_PROVIDER_KEY);
+        return raw === 'openrouter' || raw === 'ideogram' ? (raw as MockupProvider) : 'ideogram';
+    } catch {
+        return 'ideogram';
+    }
+}
+
+export function saveMockupProvider(value: MockupProvider): MockupProvider {
+    if (typeof window !== 'undefined') {
+        window.localStorage.setItem(MOCKUP_PROVIDER_KEY, value);
+    }
+    return value;
+}
+
+export function clearMockupProvider(): void {
+    if (typeof window !== 'undefined') {
+        window.localStorage.removeItem(MOCKUP_PROVIDER_KEY);
+    }
+}
+
+// Ideogram default settings
+export interface IdeogramDefaults {
+    aspect_ratio?: import('./ideogram').IdeogramAspectRatio;
+    rendering_speed?: import('./ideogram').IdeogramRenderingSpeed;
+    magic_prompt?: import('./ideogram').IdeogramMagicPrompt;
+    style_type?: import('./ideogram').IdeogramStyleType;
+    negative_prompt?: string;
+    seed?: number | null;
+}
+
+const IDEOGRAM_DEFAULTS_KEY = 'merchalyzer.ideogram.defaults.v1';
+
+export function loadIdeogramDefaults(): IdeogramDefaults {
+    if (typeof window === 'undefined') return {};
+    try {
+        const raw = window.localStorage.getItem(IDEOGRAM_DEFAULTS_KEY);
+        const parsed = raw ? JSON.parse(raw) as IdeogramDefaults : {};
+        return parsed && typeof parsed === 'object' ? parsed : {};
+    } catch {
+        return {};
+    }
+}
+
+export function saveIdeogramDefaults(value: IdeogramDefaults): IdeogramDefaults {
+    if (typeof window !== 'undefined') {
+        window.localStorage.setItem(IDEOGRAM_DEFAULTS_KEY, JSON.stringify(value || {}));
+    }
+    return value;
+}
+
+export function clearIdeogramDefaults(): void {
+    if (typeof window !== 'undefined') {
+        window.localStorage.removeItem(IDEOGRAM_DEFAULTS_KEY);
+    }
+}
+
+// Saved mockups (per idea id -> selected image data URLs)
+export type SavedMockups = Record<string, string[]>;
+
+export function loadSavedMockups(): SavedMockups {
+    if (typeof window === 'undefined') return {};
+    try {
+        const raw = window.localStorage.getItem(DESIGN_MOCKUPS_SAVED_KEY);
+        if (!raw) return {};
+        const parsed = JSON.parse(raw) as unknown;
+        if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+            return parsed as SavedMockups;
+        }
+        return {};
+    } catch {
+        return {};
+    }
+}
+
+export function saveSavedMockups(value: SavedMockups): SavedMockups {
+    if (typeof window !== 'undefined') {
+        try {
+            window.localStorage.setItem(DESIGN_MOCKUPS_SAVED_KEY, JSON.stringify(value || {}));
+        } catch (err) {
+            console.warn('Failed to persist saved mockups; size may be too large.', err);
+        }
+    }
+    return value;
+}
+
+export function clearSavedMockups(): void {
+    if (typeof window !== 'undefined') {
+        window.localStorage.removeItem(DESIGN_MOCKUPS_SAVED_KEY);
+    }
+}
+
+// General-purpose user styles (reusable across features)
+export interface UserStyle {
+    id: string;
+    name: string; // display name
+    label?: string; // concise label
+    details?: string; // detailed guidance text
+    tags?: string[]; // arbitrary tags/contexts, e.g. ['design','image','mockup']
+    createdAt?: number;
+    updatedAt?: number;
+}
+
+export function loadUserStyles(): UserStyle[] {
+    if (typeof window === 'undefined') return [];
+    try {
+        const raw = window.localStorage.getItem(USER_STYLES_KEY);
+        if (!raw) return [];
+        const parsed = JSON.parse(raw) as unknown;
+        return Array.isArray(parsed) ? (parsed as UserStyle[]) : [];
+    } catch {
+        return [];
+    }
+}
+
+export function saveUserStyles(styles: UserStyle[]): UserStyle[] {
+    if (typeof window !== 'undefined') {
+        window.localStorage.setItem(USER_STYLES_KEY, JSON.stringify(styles || []));
+    }
+    return styles;
+}
+
+export function upsertUserStyle(style: UserStyle): UserStyle[] {
+    const list = loadUserStyles();
+    const idx = list.findIndex((s) => s.id === style.id);
+    const now = Date.now();
+    const next: UserStyle = { ...style, updatedAt: now, createdAt: style.createdAt ?? now };
+    if (idx >= 0) list[idx] = next; else list.unshift(next);
+    return saveUserStyles(list);
+}
+
+export function deleteUserStyle(id: string): UserStyle[] {
+    const list = loadUserStyles().filter((s) => s.id !== id);
+    return saveUserStyles(list);
+}
+
 const WORKFLOW_KEY = 'merchalyzer.workflow.v1';
 const WORKFLOW_METADATA_KEY = 'merchalyzer.workflow.metadata.v1';
 
@@ -330,7 +533,9 @@ interface SerializedWorkflowImage {
 	status: WorkflowImage['status'];
 	error?: string;
 	metadata: WorkflowImage['metadata'];
-	processingSteps: WorkflowImage['processingSteps'];
+    processingSteps: WorkflowImage['processingSteps'];
+    history?: string[];
+    historySteps?: string[];
 }
 
 interface SerializedWorkflowMetadata {
@@ -405,18 +610,20 @@ export async function loadWorkflowImages(): Promise<WorkflowImage[]> {
 					const blob = await response.blob();
 					const file = new File([blob], item.fileName, { type: item.fileType });
 
-					return {
-						id: item.id,
-						originalFile: file,
-						processedUrl: item.processedUrl,
-						thumbnailUrl: item.thumbnailUrl,
-						status: item.status,
-						error: item.error,
-						metadata: item.metadata,
-						processingSteps: item.processingSteps,
-					};
-				})
-			);
+            return {
+                id: item.id,
+                originalFile: file,
+                processedUrl: item.processedUrl,
+                thumbnailUrl: item.thumbnailUrl,
+                status: item.status,
+                error: item.error,
+                metadata: item.metadata,
+                processingSteps: item.processingSteps,
+                history: item.history,
+                historySteps: item.historySteps,
+            };
+        })
+        );
 
 			return images;
 		}
@@ -438,19 +645,21 @@ export async function saveWorkflowImages(images: WorkflowImage[]): Promise<void>
 				// Convert File to base64
 				const base64Data = await fileToBase64(image.originalFile);
 
-				return {
-					id: image.id,
-					fileName: image.originalFile.name,
-					fileType: image.originalFile.type,
-					fileSize: image.originalFile.size,
-					base64Data,
-					processedUrl: image.processedUrl,
-					thumbnailUrl: image.thumbnailUrl,
-					status: image.status,
-					error: image.error,
-					metadata: image.metadata,
-					processingSteps: image.processingSteps,
-				};
+        return {
+            id: image.id,
+            fileName: image.originalFile.name,
+            fileType: image.originalFile.type,
+            fileSize: image.originalFile.size,
+            base64Data,
+            processedUrl: image.processedUrl,
+            thumbnailUrl: image.thumbnailUrl,
+            status: image.status,
+            error: image.error,
+            metadata: image.metadata,
+            processingSteps: image.processingSteps,
+            history: image.history,
+            historySteps: image.historySteps,
+        };
 			})
 		);
 
@@ -560,6 +769,8 @@ type IDBWorkflowItem = {
     error?: string;
     metadata: WorkflowImage['metadata'];
     processingSteps: WorkflowImage['processingSteps'];
+    history?: string[];
+    historySteps?: string[];
 };
 
 export async function saveWorkflowImagesIndexedDB(images: WorkflowImage[]): Promise<void> {
@@ -590,6 +801,8 @@ export async function saveWorkflowImagesIndexedDB(images: WorkflowImage[]): Prom
                 error: image.error,
                 metadata: image.metadata,
                 processingSteps: image.processingSteps,
+                history: image.history,
+                historySteps: image.historySteps,
             };
 
             return new Promise<void>((resolve, reject) => {
@@ -676,6 +889,8 @@ export async function loadWorkflowImagesIndexedDB(): Promise<WorkflowImage[]> {
                 error: it.error,
                 metadata: it.metadata,
                 processingSteps: it.processingSteps,
+                history: it.history,
+                historySteps: it.historySteps,
             };
         });
 

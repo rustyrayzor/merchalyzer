@@ -3,9 +3,9 @@ import sharp from 'sharp';
 import path from 'path';
 import { promises as fs } from 'fs';
 
-// Create processed directory if it doesn't exist
+// Create processed/workflow/scaled directory if it doesn't exist
 const ensureProcessedDir = async () => {
-  const processedDir = path.join(process.cwd(), 'processed');
+  const processedDir = path.join(process.cwd(), 'processed', 'workflow', 'scaled');
   await fs.mkdir(processedDir, { recursive: true });
   return processedDir;
 };
@@ -22,55 +22,23 @@ export async function POST(request: NextRequest) {
     // Convert file to buffer
     const buffer = Buffer.from(await file.arrayBuffer());
 
-    // Get original image metadata to calculate proper scaling
-    const metadata = await sharp(buffer).metadata();
+    // 1) Trim transparent/solid background from edges to the visible content
+    const trimmed = await sharp(buffer)
+      .png() // ensure alpha channel is preserved
+      .trim() // auto-crop surrounding background (transparent/solid)
+      .toBuffer();
 
-    if (!metadata.width || !metadata.height) {
-      throw new Error('Unable to read image dimensions');
-    }
-
-    // Calculate scaling to fit width to 4500px while maintaining aspect ratio
-    const scaleFactor = 4500 / metadata.width;
-    const scaledHeight = Math.round(metadata.height * scaleFactor);
-
-    let finalBuffer: Buffer;
-
-    if (scaledHeight >= 5400) {
-      // If scaled height is >= 5400, crop from the top
-      finalBuffer = await sharp(buffer)
-        .resize(4500, 5400, {
-          fit: 'cover',
-          position: 'top', // Align to top
-          withoutEnlargement: false
-        })
-        .png()
-        .toBuffer();
-    } else {
-      // If scaled height is < 5400, resize to fit width and add transparent padding at bottom
-      const resizedBuffer = await sharp(buffer)
-        .resize(4500, null, { // null maintains aspect ratio
-          withoutEnlargement: false
-        })
-        .png()
-        .toBuffer();
-
-      // Create canvas with transparent background and composite the resized image at the top
-      finalBuffer = await sharp({
-        create: {
-          width: 4500,
-          height: 5400,
-          channels: 4,
-          background: { r: 0, g: 0, b: 0, alpha: 0 }
-        }
+    // 2) Place on a 4500x5400 canvas, scaling to fit while keeping aspect and
+    //    aligning to the top and horizontally centered (ideal for tees)
+    const finalBuffer: Buffer = await sharp(trimmed)
+      .resize(4500, 5400, {
+        fit: 'contain',
+        position: 'north', // top-center
+        background: { r: 0, g: 0, b: 0, alpha: 0 },
+        withoutEnlargement: false,
       })
-        .composite([{
-          input: resizedBuffer,
-          top: 0, // Align to top
-          left: 0
-        }])
-        .png()
-        .toBuffer();
-    }
+      .png()
+      .toBuffer();
 
     // Create processed directory in web folder if it doesn't exist
     const processedDir = await ensureProcessedDir();
@@ -112,7 +80,7 @@ export async function POST(request: NextRequest) {
         'Content-Type': 'image/png',
         'Content-Length': finalBuffer.length.toString(),
         'X-Processed-File': pngFilename,
-        'X-Processed-Url': `/api/images/processed/${pngFilename}`,
+        'X-Processed-Url': `/api/images/processed/workflow/scaled/${pngFilename}`,
       },
     });
 

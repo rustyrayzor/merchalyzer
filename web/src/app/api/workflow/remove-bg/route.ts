@@ -4,9 +4,9 @@ import sharp from 'sharp';
 import path from 'path';
 import { promises as fs } from 'fs';
 
-// Create processed directory if it doesn't exist
+// Create processed/workflow/removebg directory if it doesn't exist
 const ensureProcessedDir = async () => {
-  const processedDir = path.join(process.cwd(), 'processed');
+  const processedDir = path.join(process.cwd(), 'processed', 'workflow', 'removebg');
   await fs.mkdir(processedDir, { recursive: true });
   return processedDir;
 };
@@ -142,7 +142,7 @@ export async function POST(request: NextRequest) {
           'Content-Type': 'image/png',
           'Content-Length': pngBuffer.length.toString(),
           'X-Processed-File': pngFilename,
-          'X-Processed-Url': `/api/images/processed/${pngFilename}`,
+          'X-Processed-Url': `/api/images/processed/workflow/removebg/${pngFilename}`,
         },
       });
     }
@@ -237,7 +237,7 @@ export async function POST(request: NextRequest) {
         'Content-Type': 'image/png',
         'Content-Length': pngBuffer.length.toString(),
         'X-Processed-File': pngFilename,
-        'X-Processed-Url': `/api/images/processed/${pngFilename}`,
+        'X-Processed-Url': `/api/images/processed/workflow/removebg/${pngFilename}`,
       },
     });
 

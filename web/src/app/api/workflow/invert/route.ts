@@ -3,9 +3,9 @@ import sharp from 'sharp';
 import path from 'path';
 import { promises as fs } from 'fs';
 
-// Create processed directory if it doesn't exist
+// Create processed/workflow/invert directory if it doesn't exist
 const ensureProcessedDir = async () => {
-  const processedDir = path.join(process.cwd(), 'processed');
+  const processedDir = path.join(process.cwd(), 'processed', 'workflow', 'invert');
   await fs.mkdir(processedDir, { recursive: true });
   return processedDir;
 };
@@ -76,7 +76,7 @@ export async function POST(request: NextRequest) {
         'Content-Type': 'image/png',
         'Content-Length': processedImageBuffer.length.toString(),
         'X-Processed-File': pngFilename,
-        'X-Processed-Url': `/api/images/processed/${pngFilename}`,
+        'X-Processed-Url': `/api/images/processed/workflow/invert/${pngFilename}`,
       },
     });
   } catch (error) {
@@ -87,4 +87,3 @@ export async function POST(request: NextRequest) {
     );
   }
 }
-

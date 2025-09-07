@@ -23,9 +23,11 @@ function buildSystemPrompt(): string {
     '',
     'Rules:',
     '- Each idea must be EXACTLY three sentences:',
-    '  1) First sentence MUST BEGIN with: Quote: <the creative quote text without quotation marks>. Make it original — prioritize clever wordplay, fresh phrasing, or light puns. Match the SELECTED TONE from the user context: if tone is "Funny" or "Sarcastic", make it witty/clever; otherwise match the specified tone (e.g., inspirational, minimalist, vintage, gothic, bold, elegant, professional, friendly, edgy, youthful, feminine, masculine). Avoid clichés and generic phrases.',
-    '  2) Second sentence: 18–36 words with a detailed visual description that explicitly mentions the provided theme, the selected tone, and the selected T‑shirt art style. Include concrete style cues: color palette, typography style/weight, linework quality, layout/placement, motifs/iconography, and overall mood. Avoid camera/photography terms. Do NOT repeat the quote text here; refer to it implicitly (e.g., “the quote”).',
+    '  1) First sentence MUST BEGIN with the tag Quote — <the creative quote text without quotation marks>. Do NOT use any colon characters (:). Make it original — prioritize clever wordplay, fresh phrasing, or light puns. Match the SELECTED TONE from the user context: if tone is "Funny" or "Sarcastic", make it witty/clever; otherwise match the specified tone (e.g., inspirational, minimalist, vintage, gothic, bold, elegant, professional, friendly, edgy, youthful, feminine, masculine). Avoid clichés and generic phrases.',
+    '  2) Second sentence: 18–36 words with a detailed visual description that explicitly mentions the provided theme, the selected tone, and the selected T‑shirt art style. Include concrete style cues: color palette, typography style/weight/case (e.g., bold sans all‑caps with drop shadow), effects (outline, distress, glow), and explicitly state quote TEXT POSITION (e.g., center chest, arched, stacked). If primary/secondary niches are provided in the user context, include imagery, iconography, or motifs strongly associated with BOTH niches. Avoid camera/photography terms. Do NOT repeat the quote text here; refer to it implicitly (e.g., “the quote”).',
     '  3) Third sentence (append verbatim): The composition is centered against a flat dark grey background, maintains a crisp vector like style with sharp edges and high-dpi detail, perfect for apparel printing.',
+    '',
+    'Strictly avoid describing or implying any of the following visual elements: text-on-signage or UI containers, speech bubbles, posters, banners, billboards, characters holding signs, people holding objects with text, meme-style captions, labels, icons with text, word balloons, graffiti walls, chalkboard/whiteboard scenes, or logo mockups. Designs should be direct comp graphics suitable for a T‑shirt canvas, not staged signage.',
     '- Do NOT include words like "t-shirt", "shirt", "tee", or "gift".',
     '- Do NOT wrap content in quotes.',
     '- Avoid mentioning prompts, files, or system instructions.',
@@ -34,6 +36,7 @@ function buildSystemPrompt(): string {
     '- Keep ideas distinct from each other.',
     '',
     'Output ONLY strict JSON as: { "ideas": ["...", "..."] }',
+    'Global formatting rule: never emit a colon character (:). Use an em dash (—) or a hyphen (-) instead to separate labels from content (e.g., "Quote — Hello world"). You may emphasize words via ALL CAPS where helpful.',
   ].join('\n');
 }
 

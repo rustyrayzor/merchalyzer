@@ -3,9 +3,9 @@ import sharp from 'sharp';
 import path from 'path';
 import { promises as fs } from 'fs';
 
-// Create processed directory if it doesn't exist
+// Create processed/workflow/color-change directory if it doesn't exist
 const ensureProcessedDir = async () => {
-  const processedDir = path.join(process.cwd(), 'processed');
+  const processedDir = path.join(process.cwd(), 'processed', 'workflow', 'color-change');
   await fs.mkdir(processedDir, { recursive: true });
   return processedDir;
 };
@@ -52,6 +52,9 @@ export async function POST(request: NextRequest) {
         if (points.length >= 3) selectionPolygons.push({ points });
       }
     }
+
+    // Optional paint mask
+    const maskFile = formData.get('mask') as File | null;
 
     if (!file) {
       return NextResponse.json({ error: 'No image provided' }, { status: 400 });
@@ -106,7 +109,8 @@ export async function POST(request: NextRequest) {
       const a = channels === 4 ? data[idx + 3] : 255;
       if (fullColorReplacement) {
         if (replaceWithTransparent) {
-          // Make pixel fully transparent
+          // Make pixel fully transparent; zero RGB to avoid halos
+          newData[idx] = 0; newData[idx + 1] = 0; newData[idx + 2] = 0;
           newData[idx + 3] = 0;
         } else if (replacementRgb) {
           newData[idx] = replacementRgb.r;
@@ -121,56 +125,72 @@ export async function POST(request: NextRequest) {
         const db = b - targetRgb.b;
         const distSq = dr * dr + dg * dg + db * db;
         if (distSq <= tolSq) {
-          if (replaceWithTransparent) {
-            newData[idx + 3] = 0;
-          } else if (replacementRgb) {
-            newData[idx] = replacementRgb.r;
-            newData[idx + 1] = replacementRgb.g;
-            newData[idx + 2] = replacementRgb.b;
+            if (replaceWithTransparent) {
+              newData[idx] = 0; newData[idx + 1] = 0; newData[idx + 2] = 0;
+              newData[idx + 3] = 0;
+            } else if (replacementRgb) {
+              newData[idx] = replacementRgb.r;
+              newData[idx + 1] = replacementRgb.g;
+              newData[idx + 2] = replacementRgb.b;
             newData[idx + 3] = a;
           }
         }
       }
     };
 
-    // If there are no selections, scan the entire image
+    // Load mask if present and resize to image dimensions
+    let maskData: Uint8Array | null = null;
+    let maskChannels = 0;
+    if (maskFile) {
+      try {
+        const maskArr = await maskFile.arrayBuffer();
+        const maskBuf = Buffer.from(maskArr);
+        const { data: md, info: mi } = await sharp(maskBuf)
+          .ensureAlpha()
+          .resize(width, height, { fit: 'fill' })
+          .raw()
+          .toBuffer({ resolveWithObject: true });
+        maskData = md;
+        maskChannels = mi.channels;
+      } catch (e) {
+        console.warn('Mask load failed, ignoring:', e);
+        maskData = null;
+      }
+    }
+
+    const hasMask = !!maskData;
+
+    // If there are no selections/mask, scan the entire image
     const hasRects = selectionRects.length > 0;
     const hasPolys = selectionPolygons.length > 0;
 
-    if (!hasRects && !hasPolys) {
+    if (!hasRects && !hasPolys && !hasMask) {
       for (let i = 0; i < data.length; i += channels) {
         applyAt(i);
       }
     } else {
-      // Process rectangles by iterating only inside each rect
-      for (const rect of selectionRects) {
-        const startX = Math.max(0, Math.floor(rect.x));
-        const startY = Math.max(0, Math.floor(rect.y));
-        const endX = Math.min(width, Math.ceil(rect.x + rect.width));
-        const endY = Math.min(height, Math.ceil(rect.y + rect.height));
-        for (let y = startY; y < endY; y++) {
-          let base = (y * width + startX) * channels;
-          for (let x = startX; x < endX; x++, base += channels) {
-            applyAt(base);
-          }
-        }
-      }
-
-      // Process polygons by iterating over bounding boxes
-      for (const poly of selectionPolygons) {
-        if (!poly.points || poly.points.length < 3) continue;
-        const xs = poly.points.map(p => p.x);
-        const ys = poly.points.map(p => p.y);
-        const minX = Math.max(0, Math.floor(Math.min(...xs)));
-        const maxX = Math.min(width, Math.ceil(Math.max(...xs)));
-        const minY = Math.max(0, Math.floor(Math.min(...ys)));
-        const maxY = Math.min(height, Math.ceil(Math.max(...ys)));
-        for (let y = minY; y < maxY; y++) {
-          for (let x = minX; x < maxX; x++) {
-            if (pointInPolygon(x + 0.5, y + 0.5, poly.points)) {
-              const idx = (y * width + x) * channels;
-              applyAt(idx);
+      // Unified scan with gating: pixel must be inside any rect OR any polygon OR mask alpha > 0
+      for (let y = 0; y < height; y++) {
+        for (let x = 0; x < width; x++) {
+          let inside = false;
+          if (!inside && hasRects) {
+            for (const rect of selectionRects) {
+              if (x >= rect.x && x < rect.x + rect.width && y >= rect.y && y < rect.y + rect.height) { inside = true; break; }
             }
+          }
+          if (!inside && hasPolys) {
+            for (const poly of selectionPolygons) {
+              if (poly.points && poly.points.length >= 3 && pointInPolygon(x + 0.5, y + 0.5, poly.points)) { inside = true; break; }
+            }
+          }
+          if (!inside && hasMask && maskData) {
+            const midx = (y * width + x) * maskChannels;
+            const ma = maskData[midx + (maskChannels - 1)];
+            if (ma > 0) inside = true;
+          }
+          if (inside) {
+            const idx = (y * width + x) * channels;
+            applyAt(idx);
           }
         }
       }
@@ -233,7 +253,7 @@ export async function POST(request: NextRequest) {
         'Content-Type': 'image/png',
         'Content-Length': processedImageBuffer.length.toString(),
         'X-Processed-File': pngFilename,
-        'X-Processed-Url': `/api/images/processed/${pngFilename}`,
+        'X-Processed-Url': `/api/images/processed/workflow/color-change/${pngFilename}`,
       },
     });
 

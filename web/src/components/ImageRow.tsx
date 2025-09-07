@@ -26,7 +26,8 @@ import {
   CheckCircle2,
   XCircle,
   HelpCircle,
-  Contrast
+  Contrast,
+  GitMerge
 } from 'lucide-react';
 
 
@@ -41,6 +42,9 @@ interface ImageRowProps {
   isSelected: boolean;
   onSelect: (imageId: string) => void;
   onProcess: (imageId: string, operation: string) => void;
+  onUndo?: (imageId: string) => void;
+  onRevert?: (imageId: string) => void;
+  onFullProcess?: (imageId: string) => void;
   onDelete: (imageId: string) => void;
   onMetadataChange: (imageId: string, field: string, value: string) => void;
   onBroadcastMetadata?: (field: 'brand' | 'keywords', value: string, scope: 'all' | 'selected') => void;
@@ -51,6 +55,9 @@ export default function ImageRow({
   isSelected,
   onSelect,
   onProcess,
+  onUndo,
+  onRevert,
+  onFullProcess,
   onDelete,
   onMetadataChange,
   onBroadcastMetadata,
@@ -63,6 +70,8 @@ export default function ImageRow({
   const [selectedBgColor, setSelectedBgColor] = useState<string>('transparent');
   const [customColors, setCustomColors] = useState<string[]>([]);
   const [imageDimensions, setImageDimensions] = useState<{width: number, height: number} | null>(null);
+  const [processedDimensions, setProcessedDimensions] = useState<{width: number, height: number} | null>(null);
+  const [originalUrl, setOriginalUrl] = useState<string>("");
   const [showColorPickerModal, setShowColorPickerModal] = useState(false);
   const [selectedColor, setSelectedColor] = useState('#ff0000');
   const hasAutoSwitchedRef = useRef(false);
@@ -75,19 +84,48 @@ export default function ImageRow({
     setShowProcessed(false);
   }, [image.id]);
 
-  // Calculate image dimensions
+  // Calculate original image dimensions
   useEffect(() => {
     if (image.originalFile) {
+      const url = URL.createObjectURL(image.originalFile);
+      setOriginalUrl(url);
       const img = new Image();
       img.onload = () => {
         setImageDimensions({
           width: img.naturalWidth,
-          height: img.naturalHeight
+          height: img.naturalHeight,
         });
       };
-      img.src = URL.createObjectURL(image.originalFile);
+      img.src = url;
+      return () => {
+        URL.revokeObjectURL(url);
+      };
+    } else {
+      setOriginalUrl("");
+      setImageDimensions(null);
     }
   }, [image.originalFile]);
+
+  // Calculate processed image dimensions when available/updated
+  useEffect(() => {
+    let cancelled = false;
+    const load = async () => {
+      try {
+        if (!image.processedUrl) { setProcessedDimensions(null); return; }
+        const i = new Image();
+        await new Promise<void>((resolve, reject) => {
+          i.onload = () => resolve();
+          i.onerror = () => reject(new Error('failed to load processed image'));
+          i.src = image.processedUrl!;
+        });
+        if (!cancelled) setProcessedDimensions({ width: i.naturalWidth, height: i.naturalHeight });
+      } catch {
+        if (!cancelled) setProcessedDimensions(null);
+      }
+    };
+    load();
+    return () => { cancelled = true; };
+  }, [image.processedUrl]);
 
 
 
@@ -202,10 +240,10 @@ export default function ImageRow({
                   src={
                     showProcessed && image.processedUrl
                       ? image.processedUrl
-                      : image.thumbnailUrl || ''
+                      : image.thumbnailUrl || originalUrl || ''
                   }
                   alt={image.originalFile.name}
-                  className="w-full h-full object-contain rounded border border-gray-300 transition-all duration-200 group-hover:scale-105 group-hover:shadow-lg"
+                  className="w-full h-full object-contain object-center rounded border border-gray-300 transition-all duration-200 group-hover:scale-105 group-hover:shadow-lg"
                   style={{
                     backgroundColor: 'transparent',
                   }}
@@ -226,11 +264,13 @@ export default function ImageRow({
             )}
 
             {/* Image Dimensions */}
-            {imageDimensions && (
-              <div className="mt-1 text-xs text-gray-500 text-center">
-                {imageDimensions.width}×{imageDimensions.height}
-              </div>
-            )}
+            <div className="mt-1 text-xs text-gray-500 text-center min-h-4">
+              {(() => {
+                const dims = (showProcessed && processedDimensions) ? processedDimensions : imageDimensions;
+                if (!dims) return null;
+                return (<span>{dims.width}×{dims.height}</span>);
+              })()}
+            </div>
 
             {/* Status Badge */}
             <div className="absolute -top-1 -right-1">
@@ -718,6 +758,18 @@ export default function ImageRow({
               Quick Invert
             </Button>
 
+            <Button
+              onClick={() => onFullProcess?.(image.id)}
+              disabled={image.status === 'processing'}
+              variant="outline"
+              className="w-full"
+              size="sm"
+              title="Full process: Upscale → Remove BG → Scale"
+            >
+              <GitMerge className="h-4 w-4 mr-2" />
+              Full Process
+            </Button>
+
             {image.processedUrl && (
               <Button
                 onClick={() => {
@@ -736,6 +788,31 @@ export default function ImageRow({
               >
                 <Download className="h-4 w-4 mr-2" />
                 Download
+              </Button>
+            )}
+
+            {(image.history && image.history.length > 0) && (
+              <Button
+                onClick={() => onUndo?.(image.id)}
+                variant="outline"
+                className="w-full"
+                size="sm"
+                title="Undo last processing step"
+              >
+                <RotateCcw className="h-4 w-4 mr-2" />
+                Undo Last
+              </Button>
+            )}
+
+            {(image.history && image.history.length > 0) && (
+              <Button
+                onClick={() => onRevert?.(image.id)}
+                variant="secondary"
+                className="w-full"
+                size="sm"
+                title="Revert to original image"
+              >
+                Revert to Original
               </Button>
             )}
 

@@ -2,7 +2,7 @@
 
 import { useState, useCallback, useEffect } from 'react';
 import { WorkflowImage } from '@/lib/types';
-import { loadDefaultModel, loadWorkflowImages, saveWorkflowImages, clearWorkflowImages, checkStorageQuota, clearAllStorage, saveWorkflowImagesIndexedDB, loadWorkflowImagesIndexedDB, clearWorkflowImagesIndexedDB, getIndexedDBStorageInfo, clearProcessedFolder, loadBgRemovalProvider } from '@/lib/storage';
+import { loadDefaultModel, loadWorkflowImages, saveWorkflowImages, clearWorkflowImages, checkStorageQuota, clearAllStorage, saveWorkflowImagesIndexedDB, loadWorkflowImagesIndexedDB, clearWorkflowImagesIndexedDB, getIndexedDBStorageInfo, clearProcessedFolder, loadBgRemovalProvider, loadUpscaleProvider, loadIdeogramUpscaleSettings } from '@/lib/storage';
 import { createZipWithCsvAndImages, ImageData } from '@/lib/csv';
 import { generateUUID } from '@/lib/utils';
 import BatchToolbar from './BatchToolbar';
@@ -266,6 +266,16 @@ export default function ImageManager() {
 
         if (savedImages.length > 0) {
           setImages(savedImages);
+          // Generate thumbnails for any images missing them (e.g., imported via Workflow send)
+          try {
+            savedImages.forEach((img) => {
+              if (!img.thumbnailUrl && img.originalFile) {
+                generateThumbnail(img);
+              }
+            });
+          } catch (e) {
+            console.warn('Thumbnail generation skipped:', e);
+          }
         }
       } catch (error) {
         console.error('Error loading workflow data:', error);
@@ -277,7 +287,7 @@ export default function ImageManager() {
     };
 
     loadWorkflowData();
-  }, [updateStorageQuota]);
+  }, [updateStorageQuota, generateThumbnail]);
 
   // Save workflow data whenever images change
   useEffect(() => {
@@ -359,22 +369,27 @@ export default function ImageManager() {
   }, []);
 
   // Process single image with a specific operation
-  const processImage = useCallback(async (imageId: string, operation: string) => {
+  type ProcessSource = 'original' | 'processed';
+  const processImage = useCallback(async (
+    imageId: string,
+    operation: string,
+    opts?: { forceSource?: ProcessSource; sourceBlob?: Blob; sourceName?: string }
+  ): Promise<{ url: string | null; blob: Blob } | null> => {
     const image = images.find((img) => img.id === imageId);
-    if (!image) return;
+    if (!image) return null;
 
     // Handle edit-ai specially - open modal instead of processing immediately
     if (operation === 'edit-ai') {
       setSelectedImageForEdit(image);
       setIsEditModalOpen(true);
-      return;
+      return null;
     }
 
     // Handle color-change specially - open color picker modal instead of processing immediately
     if (operation === 'color-change') {
       setSelectedImageForColorChange(image);
       setIsColorChangeModalOpen(true);
-      return;
+      return null;
     }
 
     setImages((prev) =>
@@ -510,11 +525,21 @@ export default function ImageManager() {
         let endpoint = '';
         const formData = new FormData();
 
-        // Use processed image if available, otherwise use original
-        if (image.processedUrl) {
+        // Choose source according to opts
+        const wantProcessed = opts?.forceSource === 'processed';
+        const wantOriginal = opts?.forceSource === 'original';
+        const canUseProcessed = !!image.processedUrl && !wantOriginal;
+
+        // Highest priority: explicit source blob (from previous step)
+        if (opts?.sourceBlob) {
+          const name = opts?.sourceName || image.originalFile.name;
+          const fileFromBlob = new File([opts.sourceBlob], name, { type: opts.sourceBlob.type || 'image/png' });
+          formData.append('image', fileFromBlob);
+          console.log('📎 Using explicit source blob for operation');
+        } else if (canUseProcessed || wantProcessed) {
           try {
             // Fetch the processed image as a blob
-            const processedResponse = await fetch(image.processedUrl);
+            const processedResponse = await fetch(image.processedUrl!);
             if (processedResponse.ok) {
               const processedBlob = await processedResponse.blob();
 
@@ -551,7 +576,17 @@ export default function ImageManager() {
             }
             break;
           case 'upscale':
-            endpoint = '/api/workflow/upscale';
+            {
+              const provider = loadUpscaleProvider();
+              endpoint = `/api/workflow/upscale?provider=${encodeURIComponent(provider || 'ideogram')}`;
+              if (provider === 'ideogram') {
+                const s = loadIdeogramUpscaleSettings();
+                if (typeof s.resemblance === 'number') formData.append('ideo_resemblance', String(s.resemblance));
+                if (typeof s.detail === 'number') formData.append('ideo_detail', String(s.detail));
+                if (typeof s.magic_prompt_option === 'string') formData.append('ideo_magic_prompt', s.magic_prompt_option);
+                if (typeof s.seed === 'number') formData.append('ideo_seed', String(s.seed));
+              }
+            }
             break;
           case 'color-change':
             endpoint = '/api/workflow/color-change';
@@ -579,21 +614,35 @@ export default function ImageManager() {
         const processedBlob = await response.blob();
         const blobUrl = URL.createObjectURL(processedBlob);
 
-        setImages((prev) =>
-          prev.map((img) =>
-            img.id === imageId
-              ? {
-                  ...img,
-                  processedUrl: processedUrl || blobUrl, // Use HTTP URL if available, fallback to blob
-                  status: 'done',
-                  processingSteps: {
-                    ...img.processingSteps,
-                    ...(operation === 'invert' ? { inverted: true } : { [operation.replace('-', '')]: true }),
-                  },
-                }
-              : img
-          )
-        );
+        const stepKey = (() => {
+          switch (operation) {
+            case 'remove-bg': return 'backgroundRemoved';
+            case 'upscale': return 'upscaled';
+            case 'scale': return 'scaled';
+            case 'color-change': return 'colorChanged';
+            case 'invert': return 'inverted';
+            default: return (operation as string).replace('-', '');
+          }
+        })();
+
+        setImages((prev) => prev.map((img) => {
+          if (img.id !== imageId) return img;
+          const prevUrl = img.processedUrl || '';
+          const history = Array.isArray(img.history) ? img.history.slice() : [];
+          const historySteps = Array.isArray(img.historySteps) ? img.historySteps.slice() : [];
+          history.push(prevUrl);
+          historySteps.push(stepKey);
+          return {
+            ...img,
+            processedUrl: processedUrl || blobUrl, // Use HTTP URL if available, fallback to blob
+            status: 'done',
+            processingSteps: { ...img.processingSteps, [stepKey]: true },
+            history,
+            historySteps,
+          };
+        }));
+
+        return { url: processedUrl, blob: processedBlob };
       }
     } catch (error) {
       console.error(`Error processing image ${operation}:`, error);
@@ -608,8 +657,69 @@ export default function ImageManager() {
             : img
         )
       );
+      return null;
     }
+    return null;
   }, [images, fileToBase64, getGenerationModel]);
+
+  const undoLast = useCallback((imageId: string) => {
+    setImages((prev) => prev.map((img) => {
+      if (img.id !== imageId) return img;
+      const history = Array.isArray(img.history) ? img.history.slice() : [];
+      const historySteps = Array.isArray(img.historySteps) ? img.historySteps.slice() : [];
+      if (history.length === 0) {
+        return { ...img, processedUrl: undefined, status: 'pending' };
+      }
+      const prevUrl = history.pop();
+      const lastStep = historySteps.pop();
+      const nextSteps: import('../lib/types').WorkflowImage['processingSteps'] = { ...img.processingSteps };
+      type StepKey = keyof typeof nextSteps;
+      if (lastStep) {
+        const stepKey = lastStep as StepKey;
+        if (stepKey in nextSteps) {
+          nextSteps[stepKey] = false;
+        }
+      }
+      return {
+        ...img,
+        processedUrl: prevUrl || undefined,
+        status: prevUrl ? 'done' : 'pending',
+        processingSteps: nextSteps,
+        history,
+        historySteps,
+      };
+    }));
+  }, []);
+
+  const revertToOriginal = useCallback((imageId: string) => {
+    setImages((prev) => prev.map((img) => (
+      img.id === imageId
+        ? {
+            ...img,
+            processedUrl: undefined,
+            status: 'pending',
+            processingSteps: {},
+            history: [],
+            historySteps: [],
+          }
+        : img
+    )));
+  }, []);
+
+  const fullProcess = useCallback(async (imageId: string) => {
+    // Step 1: Upscale ORIGINAL
+    let step1: { url: string | null; blob: Blob } | null = null;
+    try { step1 = await processImage(imageId, 'upscale', { forceSource: 'original' }); } catch {}
+
+    // Step 2: Remove BG from UPSCALED
+    let step2: { url: string | null; blob: Blob } | null = null;
+    try { if (step1) step2 = await processImage(imageId, 'remove-bg', { sourceBlob: step1.blob, sourceName: 'upscaled.png' }); }
+    catch {}
+
+    // Step 3: Scale the BG-REMOVED result
+    try { if (step2) await processImage(imageId, 'scale', { sourceBlob: step2.blob, sourceName: 'removed_bg.png' }); }
+    catch {}
+  }, [processImage]);
 
   // Batch process all selected images
   const batchProcess = useCallback(async (operation: string) => {
@@ -799,21 +909,22 @@ export default function ImageManager() {
   const handleProceedWithEditedImage = useCallback((editedImageUrl: string) => {
     if (!selectedImageForEdit) return;
 
-    setImages((prev) =>
-      prev.map((img) =>
-        img.id === selectedImageForEdit.id
-          ? {
-              ...img,
-              processedUrl: editedImageUrl,
-              status: 'done',
-              processingSteps: {
-                ...img.processingSteps,
-                editai: true,
-              },
-            }
-          : img
-      )
-    );
+    setImages((prev) => prev.map((img) => {
+      if (img.id !== selectedImageForEdit.id) return img;
+      const prevUrl = img.processedUrl || '';
+      const history = Array.isArray(img.history) ? img.history.slice() : [];
+      const historySteps = Array.isArray(img.historySteps) ? img.historySteps.slice() : [];
+      history.push(prevUrl);
+      historySteps.push('aiEdited');
+      return {
+        ...img,
+        processedUrl: editedImageUrl,
+        status: 'done',
+        processingSteps: { ...img.processingSteps, aiEdited: true },
+        history,
+        historySteps,
+      };
+    }));
   }, [selectedImageForEdit]);
 
   // Handle color change processing
@@ -824,7 +935,8 @@ export default function ImageManager() {
     selectionRects?: Array<{ id: string; x: number; y: number; width: number; height: number }>,
     selectionPolygons?: Array<{ id: string; points: Array<{ x: number; y: number }> }>,
     fullColorReplacement?: boolean,
-    replaceWithTransparent?: boolean
+    replaceWithTransparent?: boolean,
+    paintMaskDataUrl?: string | null
   ) => {
     if (!selectedImageForColorChange) return;
 
@@ -895,6 +1007,16 @@ export default function ImageManager() {
             formData.append(`polygon${pIndex}y${i}`, pt.y.toString());
           });
         });
+      }
+
+      // Add paint mask if provided (PNG data URL)
+      if (paintMaskDataUrl) {
+        try {
+          const res = await fetch(paintMaskDataUrl);
+          const blob = await res.blob();
+          const file = new File([blob], 'mask.png', { type: 'image/png' });
+          formData.append('mask', file);
+        } catch {}
       }
 
       const response = await fetch('/api/workflow/color-change', {
@@ -1156,7 +1278,19 @@ export default function ImageManager() {
               image={image}
               isSelected={selectedImages.has(image.id)}
               onSelect={toggleSelection}
-              onProcess={processImage}
+              onProcess={(id, op) => {
+                // Manual clicks: enforce desired chaining sources
+                const map: Record<string, ProcessSource | undefined> = {
+                  'upscale': 'original',
+                  'remove-bg': 'processed',
+                  'scale': 'processed',
+                } as const;
+                const src = map[op as keyof typeof map];
+                return processImage(id, op, src ? { forceSource: src } : undefined);
+              }}
+              onUndo={undoLast}
+              onRevert={revertToOriginal}
+              onFullProcess={fullProcess}
               onDelete={deleteImage}
               onMetadataChange={updateImageMetadata}
               onBroadcastMetadata={broadcastMetadata}

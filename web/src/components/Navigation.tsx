@@ -19,8 +19,8 @@ interface NavigationItem {
 }
 
 const navigationItems: NavigationItem[] = [
-  { id: 'workflow', label: 'Workflow', icon: Workflow, component: WorkflowPage },
   { id: 'designs', label: 'Design Generator', icon: Wand2, component: DesignGeneratorPage },
+  { id: 'workflow', label: 'Merch Workflow', icon: Workflow, component: WorkflowPage },
   { id: 'edit', label: 'Image Edit', icon: Edit, component: EditPage },
   { id: 'printify', label: 'Printify', icon: Store, component: PrintifyPage },
   { id: 'settings', label: 'Settings', icon: Cog, component: SettingsPage },
@@ -88,7 +88,7 @@ export default function Navigation() {
   const getPageTitle = (pageId: PageType): string => {
     switch (pageId) {
       case 'workflow':
-        return 'Workflow';
+        return 'Merch Workflow';
       case 'designs':
         return 'Design Generator';
       case 'edit':

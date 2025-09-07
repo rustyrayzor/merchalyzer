@@ -26,7 +26,8 @@ import {
   Info,
   ArrowLeft,
   Square,
-  Lasso
+  Lasso,
+  Brush
 } from 'lucide-react';
 
 interface ColorChangeModalProps {
@@ -39,7 +40,8 @@ interface ColorChangeModalProps {
     selectionRects: Array<{ id: string; x: number; y: number; width: number; height: number }>,
     selectionPolygons: Array<{ id: string; points: Array<{ x: number; y: number }> }>,
     fullColorReplacement: boolean,
-    replaceWithTransparent: boolean
+    replaceWithTransparent: boolean,
+    paintMaskDataUrl?: string | null
   ) => Promise<void> | void;
   originalImage: WorkflowImage;
 }
@@ -65,7 +67,15 @@ export default function ColorChangeModal({
   const [startPos, setStartPos] = useState<{x: number, y: number} | null>(null);
   const [currentRect, setCurrentRect] = useState<{x: number, y: number, width: number, height: number} | null>(null);
   const [currentPolygon, setCurrentPolygon] = useState<Array<{x:number;y:number}> | null>(null);
-  const [selectionType, setSelectionType] = useState<'rect' | 'lasso'>('rect');
+  const [selectionType, setSelectionType] = useState<'rect' | 'lasso' | 'paint'>('rect');
+  // Paint-in mask state
+  const paintMaskCanvasRef = useRef<HTMLCanvasElement>(null); // offscreen mask at render size
+  const paintOverlayCanvasRef = useRef<HTMLCanvasElement>(null); // on-screen overlay scaled to display
+  const renderSizeRef = useRef<{ width: number; height: number }>({ width: 0, height: 0 });
+  const [brushSize, setBrushSize] = useState<number>(22);
+  const [isPainting, setIsPainting] = useState(false);
+  const lastPaintPointRef = useRef<{ x: number; y: number } | null>(null);
+  const [maskVersion, setMaskVersion] = useState(0);
   const [zoomLevel, setZoomLevel] = useState(1);
   const [fullColorReplacement, setFullColorReplacement] = useState(false);
   const [replaceWithTransparent, setReplaceWithTransparent] = useState(false);
@@ -81,6 +91,20 @@ export default function ColorChangeModal({
     try {
       setIsSubmitting(true);
       // Pass both rectangles and polygons to parent
+      // Include paint mask as data URL PNG if present
+      let maskDataUrl: string | null = null;
+      try {
+        if (paintMaskCanvasRef.current) {
+          // Only include if there is painted content (non-empty alpha)
+          const m = paintMaskCanvasRef.current;
+          const ctx = m.getContext('2d');
+          const d = ctx?.getImageData(0,0,m.width,m.height).data;
+          if (d) {
+            let any = false; for (let i=3;i<d.length;i+=4){ if (d[i] > 0) { any = true; break; } }
+            if (any) maskDataUrl = m.toDataURL('image/png');
+          }
+        }
+      } catch {}
       const maybe = onProceed(
         targetColor,
         replacementColor,
@@ -88,7 +112,8 @@ export default function ColorChangeModal({
         selectionRects,
         selectionPolygons,
         fullColorReplacement,
-        replaceWithTransparent
+        replaceWithTransparent,
+        maskDataUrl
       );
       if (maybe && typeof maybe.then === 'function') {
         await maybe;
@@ -105,14 +130,22 @@ export default function ColorChangeModal({
     setTolerance(30);
     setSelectionMode(false);
     setSelectionRects([]);
+    setSelectionPolygons([]);
     setIsDrawing(false);
     setStartPos(null);
     setCurrentRect(null);
+    setCurrentPolygon(null);
     setZoomLevel(1);
     setFullColorReplacement(false);
     setReplaceWithTransparent(false);
     setPreviewDataUrl(null);
     setOriginalDisplayUrl('');
+    // Clear mask
+    try {
+      const m = paintMaskCanvasRef.current; if (m) { const c = m.getContext('2d'); if (c) { c.clearRect(0,0,m.width,m.height); } }
+      const ov = paintOverlayCanvasRef.current; if (ov) { const oc = ov.getContext('2d'); if (oc) { oc.clearRect(0,0,ov.width,ov.height); } }
+      setMaskVersion(v => v + 1);
+    } catch {}
 
 
     onClose();
@@ -174,36 +207,40 @@ export default function ColorChangeModal({
     try {
       const canvas = canvasRef.current;
       const ctx = canvas.getContext('2d');
-      if (!ctx) return;
+      if (!ctx) throw new Error('Canvas 2D context unavailable');
 
       // Resolve an image source to a safe same-origin blob URL to avoid canvas tainting
       let srcUrl: string | null = null;
 
-      try {
-        // Prefer highest quality available for better zoom detail
-        if (originalImage.processedUrl) {
-          const res = await fetch(originalImage.processedUrl);
+      const tryFetchToBlobUrl = async (url?: string | null): Promise<string | null> => {
+        if (!url) return null;
+        try {
+          const res = await fetch(url);
+          if (!res.ok) return null;
           const blob = await res.blob();
-          srcUrl = URL.createObjectURL(blob);
-          revokeUrl = srcUrl;
-        } else if (originalImage.originalFile) {
-          srcUrl = URL.createObjectURL(originalImage.originalFile);
-          revokeUrl = srcUrl;
-        } else if (originalImage.thumbnailUrl) {
-          const res = await fetch(originalImage.thumbnailUrl);
-          const blob = await res.blob();
-          srcUrl = URL.createObjectURL(blob);
-          revokeUrl = srcUrl;
-        }
-      } catch {
-        // Fallback to original file if network fetch or data URL fails
-        if (originalImage.originalFile) {
-          srcUrl = URL.createObjectURL(originalImage.originalFile);
-          revokeUrl = srcUrl;
-        }
-      }
+          const u = URL.createObjectURL(blob);
+          return u;
+        } catch { return null; }
+      };
+      const tryFileToUrl = (file?: File | null): string | null => {
+        if (!file) return null;
+        if (typeof file.size === 'number' && file.size <= 0) return null; // ignore placeholder empty files
+        try { return URL.createObjectURL(file); } catch { return null; }
+      };
 
-      if (!srcUrl) return;
+      // Prefer highest quality available for better zoom detail
+      // 1) processedUrl (fetch to same-origin blob)
+      srcUrl = await tryFetchToBlobUrl(originalImage.processedUrl);
+      // 2) originalFile (only if non-empty)
+      if (!srcUrl) srcUrl = tryFileToUrl(originalImage.originalFile);
+      // 3) thumbnailUrl (fetch to blob)
+      if (!srcUrl) srcUrl = await tryFetchToBlobUrl(originalImage.thumbnailUrl);
+      // 4) last resort: if originalFile exists but size unknown, try anyway
+      if (!srcUrl && originalImage.originalFile) srcUrl = tryFileToUrl(originalImage.originalFile);
+      // Track for cleanup
+      revokeUrl = srcUrl;
+
+      if (!srcUrl) throw new Error('No source image available for preview');
 
       // Load image onto canvas
       const img = new Image();
@@ -218,8 +255,7 @@ export default function ColorChangeModal({
       // Store original image dimensions
       const originalWidth = img.naturalWidth;
       const originalHeight = img.naturalHeight;
-
-      // Update state with original dimensions for overlay positioning
+      setNaturalSize({ width: originalWidth, height: originalHeight });
 
 
       // Render at natural dimensions (or capped) for higher-quality zoom and accurate overlays
@@ -244,6 +280,16 @@ export default function ColorChangeModal({
 
       canvas.width = Math.max(1, Math.round(width));
       canvas.height = Math.max(1, Math.round(height));
+      // Track render size for paint mask
+      renderSizeRef.current = { width: canvas.width, height: canvas.height };
+      // Ensure mask canvas matches render size
+      (function ensureMask() {
+        const m = paintMaskCanvasRef.current || (paintMaskCanvasRef.current = document.createElement('canvas'));
+        if (m.width !== canvas.width || m.height !== canvas.height) {
+          m.width = canvas.width; m.height = canvas.height;
+          const mc = m.getContext('2d'); if (mc) mc.clearRect(0,0,m.width,m.height);
+        }
+      })();
 
       // Store canvas dimensions for overlay positioning
 
@@ -272,6 +318,20 @@ export default function ColorChangeModal({
         poly.points.map(p => ({ x: p.x * scaleX, y: p.y * scaleY }))
       );
 
+      // Prepare mask snapshot if present
+      let maskData: Uint8ClampedArray | null = null;
+      let maskNonEmpty = false;
+      const maskCanvas = paintMaskCanvasRef.current;
+      if (maskCanvas && maskCanvas.width === width && maskCanvas.height === height) {
+        const mctx = maskCanvas.getContext('2d');
+        if (mctx) {
+          const md = mctx.getImageData(0, 0, width, height).data;
+          // Determine if any alpha > 0 exists in mask
+          for (let i = 3; i < md.length; i += 4) { if (md[i] > 0) { maskNonEmpty = true; break; } }
+          maskData = maskNonEmpty ? md : null;
+        }
+      }
+
       // Process pixels
       for (let i = 0; i < data.length; i += 4) {
         const pixelIndex = i / 4;
@@ -280,8 +340,14 @@ export default function ColorChangeModal({
 
         // Check if pixel is within any selection (if selections exist)
         let isInSelection = true;
-        if ((selectionRects.length > 0) || (scaledPolygons.length > 0)) {
+      const hasMask = !!maskData && maskNonEmpty;
+        if ((selectionRects.length > 0) || (scaledPolygons.length > 0) || hasMask) {
           isInSelection = false;
+          // Paint mask check
+          if (hasMask && maskData) {
+            const mi = (pixelY * width + pixelX) * 4;
+            if (maskData[mi + 3] > 0) isInSelection = true;
+          }
           for (const selectionRect of selectionRects) {
             // Convert selection coordinates from original image space to canvas space
             // Selection rectangles are stored in original image coordinates
@@ -316,7 +382,8 @@ export default function ColorChangeModal({
           if (fullColorReplacement) {
             // Full color replacement: replace ALL pixels in selection
             if (replaceWithTransparent) {
-              // Make fully transparent
+              // Make fully transparent; also zero RGB to avoid halo artifacts
+              data[i] = 0; data[i + 1] = 0; data[i + 2] = 0;
               data[i + 3] = 0; // A
             } else if (replacementRgb) {
               data[i] = replacementRgb.r;     // R
@@ -339,6 +406,8 @@ export default function ColorChangeModal({
             // Replace if within tolerance
             if (distance <= tolerance) {
               if (replaceWithTransparent) {
+                // Transparent with RGB cleared
+                data[i] = 0; data[i + 1] = 0; data[i + 2] = 0;
                 data[i + 3] = 0; // A
               } else if (replacementRgb) {
                 data[i] = replacementRgb.r;     // R
@@ -367,7 +436,6 @@ export default function ColorChangeModal({
       setIsGeneratingPreview(false);
     }
   }, [targetColor, replacementColor, tolerance, selectionRects, selectionPolygons, fullColorReplacement, originalImage, replaceWithTransparent]);
-
   // Helper function to convert hex to RGB
   const hexToRgb = (hex: string): { r: number; g: number; b: number } | null => {
     const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
@@ -393,7 +461,18 @@ export default function ColorChangeModal({
   // Mouse event handlers for selection
   const handleMouseDown = (e: React.MouseEvent<HTMLImageElement>) => {
     if (!selectionMode) return;
-
+    if (selectionType === 'paint') {
+      const imgEl = e.currentTarget as HTMLImageElement;
+      const rect = imgEl.getBoundingClientRect();
+      const normX = (e.clientX - rect.left) / rect.width;
+      const normY = (e.clientY - rect.top) / rect.height;
+      const xOrig = normX * imgEl.naturalWidth;
+      const yOrig = normY * imgEl.naturalHeight;
+      setIsPainting(true);
+      lastPaintPointRef.current = { x: xOrig, y: yOrig };
+      paintToMask(xOrig, yOrig, xOrig, yOrig);
+      return;
+    }
     const imgEl = e.currentTarget as HTMLImageElement;
     const rect = imgEl.getBoundingClientRect();
     // Normalize pointer position within displayed image (accounts for zoom since rect includes transforms)
@@ -416,7 +495,21 @@ export default function ColorChangeModal({
   };
 
   const handleMouseMove = (e: React.MouseEvent<HTMLImageElement>) => {
-    if (!selectionMode || !isDrawing) return;
+    if (!selectionMode) return;
+    if (selectionType === 'paint') {
+      if (!isPainting) return;
+      const imgEl = e.currentTarget as HTMLImageElement;
+      const rect = imgEl.getBoundingClientRect();
+      const normX = (e.clientX - rect.left) / rect.width;
+      const normY = (e.clientY - rect.top) / rect.height;
+      const xOrig = normX * imgEl.naturalWidth;
+      const yOrig = normY * imgEl.naturalHeight;
+      const last = lastPaintPointRef.current || { x: xOrig, y: yOrig };
+      paintToMask(last.x, last.y, xOrig, yOrig);
+      lastPaintPointRef.current = { x: xOrig, y: yOrig };
+      return;
+    }
+    if (!isDrawing) return;
 
     const imgEl = e.currentTarget as HTMLImageElement;
     const rect = imgEl.getBoundingClientRect();
@@ -449,6 +542,13 @@ export default function ColorChangeModal({
 
   const handleMouseUp = () => {
     if (!selectionMode) return;
+    if (selectionType === 'paint') {
+      setIsDrawing(false);
+      setIsPainting(false);
+      lastPaintPointRef.current = null;
+      setMaskVersion(v => v + 1);
+      return;
+    }
 
     if (selectionType === 'rect') {
       if (!currentRect) { setIsDrawing(false); return; }
@@ -478,6 +578,49 @@ export default function ColorChangeModal({
     setSelectionPolygons([]);
     setSelectionMode(false);
   };
+  const clearPaint = () => {
+    const m = paintMaskCanvasRef.current; if (!m) return; const c = m.getContext('2d'); if (!c) return; c.clearRect(0,0,m.width,m.height);
+    // Also clear visible overlay
+    const ov = paintOverlayCanvasRef.current; if (ov) { const oc = ov.getContext('2d'); if (oc) oc.clearRect(0,0,ov.width,ov.height); }
+    setMaskVersion(v => v + 1);
+  };
+
+  // Draw helper: map original coords to render mask and draw stroke
+  const paintToMask = (x0Orig: number, y0Orig: number, x1Orig: number, y1Orig: number) => {
+    const m = paintMaskCanvasRef.current; if (!m) return;
+    const { width: rw, height: rh } = renderSizeRef.current;
+    if (!rw || !rh || !naturalSize.width || !naturalSize.height) return;
+    const sx = rw / naturalSize.width;
+    const sy = rh / naturalSize.height;
+    const x0 = x0Orig * sx; const y0 = y0Orig * sy;
+    const x1 = x1Orig * sx; const y1 = y1Orig * sy;
+    const ctx = m.getContext('2d'); if (!ctx) return;
+    ctx.save();
+    ctx.globalCompositeOperation = 'source-over';
+    ctx.strokeStyle = 'rgba(255,0,0,0.9)';
+    ctx.lineWidth = Math.max(1, Math.round(brushSize * sx));
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    ctx.beginPath();
+    ctx.moveTo(x0, y0);
+    ctx.lineTo(x1, y1);
+    ctx.stroke();
+    ctx.restore();
+    // Update on-image overlay
+    drawPaintOverlay();
+  };
+  const drawPaintOverlay = () => {
+    const ov = paintOverlayCanvasRef.current; const m = paintMaskCanvasRef.current; const imgEl = imgRef.current; if (!ov || !m || !imgEl) return;
+    const bcr = imgEl.getBoundingClientRect();
+    ov.width = Math.max(1, Math.round(bcr.width));
+    ov.height = Math.max(1, Math.round(bcr.height));
+    const ctx = ov.getContext('2d'); if (!ctx) return; ctx.clearRect(0,0,ov.width,ov.height);
+    // Draw mask scaled to display size
+    ctx.globalAlpha = 0.35;
+    ctx.imageSmoothingEnabled = true;
+    ctx.drawImage(m, 0, 0, m.width, m.height, 0, 0, ov.width, ov.height);
+    ctx.globalAlpha = 1;
+  };
 
   const removeSelection = (id: string) => {
     setSelectionRects(prev => prev.filter(rect => rect.id !== id));
@@ -492,6 +635,11 @@ export default function ColorChangeModal({
       generatePreview();
     }
   }, [targetColor, replacementColor, tolerance, selectionRects, selectionPolygons, zoomLevel, fullColorReplacement, isOpen, originalImage, generatePreview, replaceWithTransparent]);
+  useEffect(() => {
+    if (isOpen && originalImage) {
+      generatePreview();
+    }
+  }, [maskVersion]);
 
   return (
     <Sheet open={isOpen} onOpenChange={handleClose}>
@@ -599,6 +747,16 @@ export default function ColorChangeModal({
                     >
                       <Lasso className="h-4 w-4" />
                     </Button>
+                    <Button
+                      type="button"
+                      size="icon"
+                      variant={selectionType === 'paint' ? 'default' : 'outline'}
+                      className="h-8 w-8"
+                      onClick={() => setSelectionType('paint')}
+                      title="Paint in mask"
+                    >
+                      <Brush className="h-4 w-4" />
+                    </Button>
                   </div>
                 )}
               </div>
@@ -616,6 +774,13 @@ export default function ColorChangeModal({
                   >
                     <X className="h-4 w-4 mr-1" />
                     Clear All
+                  </Button>
+                  <Button
+                    onClick={clearPaint}
+                    variant="outline"
+                    size="sm"
+                  >
+                    <RotateCcw className="h-4 w-4 mr-1" /> Clear Paint
                   </Button>
                 </div>
               )}
@@ -680,6 +845,11 @@ export default function ColorChangeModal({
                         onMouseUp={selectionMode ? handleMouseUp : undefined}
                         onMouseLeave={selectionMode ? handleMouseUp : undefined}
                         draggable={false}
+                      />
+                      {/* Paint overlay canvas (scaled to displayed size) */}
+                      <canvas
+                        ref={paintOverlayCanvasRef}
+                        className="absolute left-0 top-0 pointer-events-none"
                       />
 
                       {/* Selection Rectangles Overlay */}
