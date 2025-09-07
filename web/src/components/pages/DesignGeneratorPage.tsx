@@ -580,8 +580,16 @@ export default function DesignGeneratorPage() {
       const newDesc = (data.description || '').trim().replace(/^[-•\s]+/, '');
       const comp = extractComposition(row.description || '');
       const rebuilt = `Quote - ${quote}. ${newDesc}${comp ? (newDesc.endsWith('.') ? ' ' : ' ') + comp : ''}`;
-      setRows(prev => prev.map(r => r.id === row.id ? { ...r, description: rebuilt } : r));
-      show({ title: 'Description updated', variant: 'success' });
+      setRows(prev => prev.map(r => {
+        if (r.id !== row.id) return r;
+        const shouldSyncImagePrompt = !r.imagePrompt || (r.imagePrompt ?? '') === (r.description ?? '');
+        return {
+          ...r,
+          description: rebuilt,
+          ...(shouldSyncImagePrompt ? { imagePrompt: rebuilt } : {}),
+        };
+      }));
+      show({ title: 'Description updated', description: 'Mockup prompt synced if not customized.', variant: 'success' });
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       show({ title: 'Regeneration error', description: msg, variant: 'error' });
