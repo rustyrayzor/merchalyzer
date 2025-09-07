@@ -2177,25 +2177,29 @@ export default function DesignGeneratorPage() {
                 ) : null}
                 <Button
                   variant="outline"
-                  size="sm"
+                  size="icon"
                   onClick={() => regenerateDescription(r)}
                   disabled={!!descLoading[r.id]}
                   title="Regenerate only the description sentence"
                 >
-                  {descLoading[r.id] ? <Loader2 className="h-4 w-4 mr-1 animate-spin"/> : <RefreshIcon className="h-4 w-4 mr-1"/>}
-                  Regen Desc
+                  {descLoading[r.id] ? <Loader2 className="h-4 w-4 animate-spin"/> : <RefreshIcon className="h-4 w-4"/>}
                 </Button>
-                <Button variant={copied[r.id] ? 'default' : 'outline'} size="sm" onClick={() => copyRow(r.description, r.id)} title={copied[r.id] ? 'Copied!' : 'Copy to clipboard'}>
-                  {copied[r.id] ? (<><CheckCircle2 className="h-4 w-4 mr-1" /> Copied</>) : (<><Copy className="h-4 w-4 mr-1" /> Copy</>)}
+                <Button
+                  variant="default"
+                  size="sm"
+                  onClick={() => completeAndMoveToWF(r)}
+                  title="Move to Workflow"
+                >
+                  <UploadIcon className="h-4 w-4 mr-1" /> Move to WF
                 </Button>
-                <Button variant={r.saved ? 'default' : 'outline'} size="sm" onClick={() => toggleSave(r.id)} title="Save for later">
-                  <Download className="h-4 w-4 mr-1" /> {r.saved ? 'Saved' : 'Save'}
+                <Button variant={copied[r.id] ? 'default' : 'outline'} size="icon" onClick={() => copyRow(r.description, r.id)} title={copied[r.id] ? 'Copied!' : 'Copy'}>
+                  {copied[r.id] ? <CheckCircle2 className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
                 </Button>
-                <Button variant="outline" size="sm" onClick={() => completeAndMoveToWF(r)} title="Complete and move to Workflow">
-                  <CheckCircle2 className="h-4 w-4 mr-1" /> {r.status === 'completed' ? 'Mark pending' : 'Complete + To WF'}
+                <Button variant={r.saved ? 'default' : 'outline'} size="icon" onClick={() => toggleSave(r.id)} title={r.saved ? 'Saved' : 'Save'}>
+                  <Download className="h-4 w-4" />
                 </Button>
-                <Button variant="destructive" size="sm" onClick={() => deleteRow(r.id)} title="Delete">
-                  <Trash2 className="h-4 w-4 mr-1" /> Delete
+                <Button variant="destructive" size="icon" onClick={() => deleteRow(r.id)} title="Delete">
+                  <Trash2 className="h-4 w-4" />
                 </Button>
                 </div>
               </div>
